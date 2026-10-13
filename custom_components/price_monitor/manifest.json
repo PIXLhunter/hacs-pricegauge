@@ -1,7 +1,7 @@
 {
   "domain": "price_monitor",
   "name": "Price Monitor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "config_flow": true,
   "documentation": "https://github.com/PIXLhunter/ha-price-monitor",
   "issue_tracker": "https://github.com/PIXLhunter/ha-price-monitor/issues",
@@ -12,5 +12,9 @@
   "integration_type": "service",
   "requirements": [
     "beautifulsoup4==4.13.4"
+  ],
+  "dependencies": [
+    "http",
+    "websocket_api"
   ]
 }

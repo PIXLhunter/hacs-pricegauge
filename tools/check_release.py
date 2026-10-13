@@ -7,7 +7,7 @@ comp=root/"custom_components/price_monitor"
 for p in root.rglob("*.py"): ast.parse(p.read_text())
 for p in root.rglob("*.json"): json.loads(p.read_text())
 d=json.loads((comp/"manifest.json").read_text())
-assert d["version"]=="0.2.0"
+assert d["version"]=="0.2.1"
 assert "YOUR_GITHUB_USERNAME" not in json.dumps(d), "Run prepare_repository.py first"
 assert d["codeowners"] and d["documentation"].startswith("https://github.com/")
 assert (comp/"brand/icon.png").is_file()

@@ -60,7 +60,7 @@ def extract_price(html, settings):
     if selector:
         try: selected = soup.select(selector)
         except Exception as err: raise PriceError("Invalid CSS selector") from err
-        if len(selected) != 1: raise PriceError("CSS selector must match exactly one element")
+        if len(selected) != 1: raise PriceError(f"CSS selector matched {len(selected)} elements; expected exactly one")
         attribute = settings.get("attribute", "").strip()
         value = selected[0].get(attribute) if attribute else selected[0].get_text(" ", strip=True)
         if value is None: raise PriceError("Selected attribute missing")

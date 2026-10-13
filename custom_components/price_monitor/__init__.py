@@ -4,6 +4,11 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN, PLATFORMS
 from .coordinator import PriceCoordinator
 
+async def async_setup(hass, config):
+    from .panel import async_setup_panel_api
+    await async_setup_panel_api(hass)
+    return True
+
 async def async_setup_entry(hass, entry):
     coordinator = PriceCoordinator(hass, entry, async_get_clientsession(hass))
     await coordinator.async_config_entry_first_refresh()
