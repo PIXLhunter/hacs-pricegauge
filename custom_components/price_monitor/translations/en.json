@@ -1,77 +1,8 @@
 {
-  "title": "Price Monitor",
+  "title": "PriceGauge",
   "config": {
-    "step": {
-      "user": {
-        "title": "Price Monitor",
-        "description": "Monitor a retailer URL or discover stores occasionally with an optional SerpApi key.",
-        "data": {
-          "name": "Product name",
-          "mode": "Mode: monitor or search"
-        }
-      },
-      "details": {
-        "title": "Product settings",
-        "data": {
-          "url": "Retailer product URL",
-          "currency": "Currency",
-          "selector": "CSS selector (optional override)",
-          "attribute": "HTML attribute (optional, e.g. content)",
-          "decimal_separator": "Decimal separator",
-          "target": "Target price (0 disables)",
-          "interval": "Retailer polling interval (minutes)",
-          "ean": "EAN / GTIN (optional)",
-          "query": "Product name",
-          "api_key": "SerpApi API key (optional)",
-          "country": "Country code",
-          "language": "Search language",
-          "monthly_budget": "Monthly account request budget",
-          "reserve": "Requests reserved for other use",
-          "reset_day": "Account reset day (UTC)",
-          "checks_per_month": "Maximum discoveries per product per cycle"
-        }
-      },
-      "reauth_confirm": {
-        "title": "Update SerpApi key",
-        "data": {
-          "api_key": "SerpApi API key"
-        }
-      }
-    },
-    "error": {
-      "invalid_settings": "Invalid URL, GTIN/checksum, target or budget settings."
-    },
     "abort": {
-      "already_configured": "This retailer URL or discovery query is already configured.",
-      "reauth_successful": "Key updated; the next budget-controlled discovery validates it."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Settings",
-        "data": {
-          "url": "Retailer product URL",
-          "currency": "Currency",
-          "selector": "CSS selector (optional override)",
-          "attribute": "HTML attribute (optional, e.g. content)",
-          "decimal_separator": "Decimal separator",
-          "target": "Target price (0 disables)",
-          "interval": "Retailer polling interval (minutes)",
-          "ean": "EAN / GTIN (optional)",
-          "query": "Product name",
-          "api_key": "SerpApi API key (optional)",
-          "country": "Country code",
-          "language": "Search language",
-          "monthly_budget": "Monthly account request budget",
-          "reserve": "Requests reserved for other use",
-          "reset_day": "Account reset day (UTC)",
-          "checks_per_month": "Maximum discoveries per product per cycle"
-        }
-      }
-    },
-    "error": {
-      "invalid_settings": "Invalid URL, GTIN/checksum, target or budget settings."
+      "already_configured": "PriceGauge GUI is already initialized."
     }
   }
 }

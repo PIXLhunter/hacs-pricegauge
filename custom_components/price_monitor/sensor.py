@@ -1,42 +1,48 @@
-"""Price entities and cached discovery overview."""
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from .const import DOMAIN
-PARALLEL_UPDATES = 0
+"""Dynamic seller sensors managed by the GUI."""
+from homeassistant.core import callback
+from homeassistant.components.sensor import SensorEntity,SensorDeviceClass
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from .const import DOMAIN,SIGNAL
+PARALLEL_UPDATES=0
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    keys = ["count"] if entry.data["mode"] == "search" else ["price", "lowest_price"]
-    async_add_entities(PriceSensor(entry.runtime_data, key) for key in keys)
+async def async_setup_entry(hass,entry,async_add_entities):
+    manager=entry.runtime_data;known=set()
+    @callback
+    def sync():
+        new=[]
+        for p in manager.data['products']:
+            for s in p['sellers']:
+                for key in ('price','average','minimum'):
+                    uid=f'{s["id"]}_{key}'
+                    if uid not in known:known.add(uid);new.append(PriceSensor(manager,p['id'],s['id'],key))
+        if new:async_add_entities(new)
+    entry.async_on_unload(async_dispatcher_connect(hass,SIGNAL,sync));sync()
 
-class PriceSensor(CoordinatorEntity, SensorEntity):
-    _attr_has_entity_name = True
-    def __init__(self, coordinator, key):
-        super().__init__(coordinator)
-        self.key = key
-        entry = coordinator.entry
-        self._attr_unique_id = f"{entry.entry_id}_{key}"
-        self._attr_name = {"price": "Price", "lowest_price": "Lowest observed price", "count": "Shopping candidates"}[key]
-        self._attr_device_info = {"identifiers": {(DOMAIN, entry.entry_id)}, "name": entry.title,
-                                  "manufacturer": "Price Monitor"}
-        if key != "count":
-            self._attr_device_class = SensorDeviceClass.MONETARY
-            self._attr_suggested_display_precision = 2
-        self._attr_icon = "mdi:shopping-search" if key == "count" else "mdi:tag-outline"
-
+class PriceSensor(SensorEntity):
+    _attr_should_poll=False
+    _attr_has_entity_name=True
+    _attr_device_class=SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision=2
+    def __init__(self,manager,pid,sid,key):
+        self.manager=manager;self.pid=pid;self.sid=sid;self.key=key
+        p=manager.product(pid);s=next(s for s in p['sellers'] if s['id']==sid)
+        self._attr_unique_id=f'{sid}_{key}';self._attr_name=f'{s["store"]} {key}'
+        self._attr_native_unit_of_measurement=p['currency']
+        self._attr_device_info={'identifiers':{(DOMAIN,pid)},'name':p['name'],'manufacturer':'PriceGauge'}
+    def seller(self):
+        try:p=self.manager.product(self.pid)
+        except ValueError:return None
+        return next((s for s in p['sellers'] if s['id']==self.sid),None)
     @property
-    def native_value(self): return (self.coordinator.data or {}).get(self.key)
-
+    def available(self):
+        s=self.seller();return bool(s and s.get('status')=='ok')
     @property
-    def native_unit_of_measurement(self):
-        return None if self.key == "count" else self.coordinator.settings["currency"]
-
-    @property
-    def extra_state_attributes(self):
-        data = self.coordinator.data or {}
-        if self.key == "count":
-            return {k: data.get(k) for k in ("offers", "query", "notice", "checked_at", "discovery_status",
-                    "budget_used", "budget_limit", "product_used", "product_limit", "cycle_end")}
-        if self.key == "lowest_price":
-            return {"meaning": "Lowest observed since tracking began; not historical market minimum"}
-        return {k: data.get(k) for k in ("previous_price", "lowest_price", "change_percent", "target_price",
-                "url", "source", "available", "ean_verified", "checked_at")}
+    def native_value(self):
+        s=self.seller()
+        if not s:return None
+        stats=s.get('stats',{})
+        if self.key=='price':return s.get('price')
+        if self.key=='minimum':return stats.get('min')
+        return stats.get('sum',0)/stats['count'] if stats.get('count') else None
+    async def async_added_to_hass(self):
+        self.async_on_remove(async_dispatcher_connect(self.hass,SIGNAL,self.async_write_ha_state))
