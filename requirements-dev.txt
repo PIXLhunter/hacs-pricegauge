@@ -1,0 +1,2 @@
+beautifulsoup4==4.13.4
+aiohttp>=3.11,<4

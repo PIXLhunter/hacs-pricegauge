@@ -1,0 +1,13 @@
+alias: Price Monitor - price drop
+triggers:
+  - trigger: event
+    event_type: price_monitor_price_drop
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: Price drop
+      message: >-
+        {{ trigger.event.data.name }}:
+        {{ trigger.event.data.previous_price }} -> {{ trigger.event.data.price }}
+        {{ trigger.event.data.currency }}. {{ trigger.event.data.url }}
+mode: queued
