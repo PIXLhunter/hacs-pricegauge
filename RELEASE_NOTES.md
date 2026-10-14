@@ -1,14 +1,10 @@
-# Price Monitor 0.2.0
+# PriceGauge 0.3.1
 
-- Complete UI-configurable custom integration, including local brand assets.
-- Static retailer HTML prices via Product JSON-LD, metadata or exact CSS selectors.
-- Current price, lowest observed price and target reached entities.
-- Price-drop events, persistent minimum and unavailable states on failed retailer checks.
-- Optional SerpApi discovery, separate from retailer price polling.
-- Shared persisted account budget, fair per-product allocation and cached candidates.
-- Manual discovery button subject to the same budget caps.
-- API-key recovery, entry migration, host serialization and retailer rate-limit backoff.
+- Products are collapsed by default; expand a product to manage its retailers.
+- Product headline and HA entities expose current-retailer average, minimum and maximum.
+- Retailer HA entities expose current price only. Historical retailer samples remain stored internally but are not used for product aggregates.
+- Sidebar and GUI WebSocket operations no longer require Home Assistant administrator access. They remain available only through an authenticated Home Assistant session.
+- Shopping discovery now rejects obvious accessory results, requires exact model-like identifiers, applies strict title-token similarity, and sorts accepted candidates by similarity. EAN products use EAN plus product name in the search query.
+- Removed the obsolete custom_components_0.2.1 backup tree from the repository.
 
-This is a pre-live-validation release candidate. Offline tests use synthetic HTML and
-mocked Home Assistant interfaces. No real Home Assistant lifecycle, live retailer or
-SerpApi account test was performed. Run a test-instance installation before production.
+All discovered sellers remain candidates only and must still pass retailer-page price validation.

@@ -1,4 +1,4 @@
-"""Admin-only GUI commands with visible, redacted failures."""
+"""Authenticated GUI commands with visible, redacted failures."""
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from .const import DOMAIN
@@ -8,7 +8,6 @@ from .parser import PriceError
                                  vol.Optional('payload',default={}):dict})
 @websocket_api.async_response
 async def command(hass,connection,msg):
-    connection.require_admin()
     manager=hass.data.get(DOMAIN)
     if not manager:
         connection.send_error(msg['id'],'not_initialized','PriceGauge backend not initialized; check HA startup logs')

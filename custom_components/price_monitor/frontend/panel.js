@@ -1,5 +1,5 @@
 class PriceGaugePanel extends HTMLElement {
-  constructor(){super();this.attachShadow({mode:'open'});this.data=null;this.busy=false;this.error='';this.inspectData=null;this.draft=null;this.selected=null;this.queue=[];this.viewMode='products';}
+  constructor(){super();this.attachShadow({mode:'open'});this.data=null;this.busy=false;this.error='';this.inspectData=null;this.draft=null;this.selected=null;this.queue=[];this.viewMode='products';this.openProducts=new Set();}
   set hass(h){this._hass=h;if(this.isConnected&&!this.started){this.started=true;this.load();}}
   connectedCallback(){if(this._hass&&!this.started){this.started=true;this.load();}this.timer=setInterval(()=>{if(!this.busy&&!this.draft&&this._hass)this.load();},15000);}
   disconnectedCallback(){clearInterval(this.timer);}
@@ -12,7 +12,7 @@ class PriceGaugePanel extends HTMLElement {
   format(n,c=''){return n==null?'—':Number(n).toFixed(2)+(c?' '+c:'');}
   link(url,text){const a=this.el('a',text);try{const u=new URL(url);if(['http:','https:'].includes(u.protocol)){a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';}}catch{}return a;}
   render(){
-    const r=this.shadowRoot;r.replaceChildren();const style=this.el('style');style.textContent=`:host{display:block;padding:20px;font-family:Arial,sans-serif;color:var(--primary-text-color)}header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}header h2{flex:1}button{padding:10px 14px;margin:5px;cursor:pointer;border-radius:6px;border:1px solid var(--divider-color);color:var(--primary-text-color);background:var(--card-background-color)}button.red{background:#c62828;color:white;border:0}button:disabled{opacity:.5}article,.box{border:1px solid var(--divider-color);border-radius:10px;padding:16px;margin:16px 0;background:var(--card-background-color)}label{display:block;margin:10px 0}input,select{display:block;width:100%;box-sizing:border-box;max-width:800px;padding:10px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color)}input[type=checkbox]{display:inline;width:auto}a{color:var(--primary-color);margin:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.error{padding:12px;background:#b71c1c;color:white}.snapshot{max-height:450px;overflow:auto;border:2px solid #888;padding:16px;background:white;color:black}.snapshot [data-node]:hover{outline:2px solid #c62828;cursor:crosshair}.snapshot .chosen{outline:3px solid #c62828}.seller{border-top:1px solid var(--divider-color);padding:10px 0}small{display:block;margin:8px 0}`;r.append(style);
+    const r=this.shadowRoot;r.replaceChildren();const style=this.el('style');style.textContent=`:host{display:block;padding:20px;font-family:Arial,sans-serif;color:var(--primary-text-color)}header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}header h2{flex:1}button{padding:10px 14px;margin:5px;cursor:pointer;border-radius:6px;border:1px solid var(--divider-color);color:var(--primary-text-color);background:var(--card-background-color)}button.red{background:#c62828;color:white;border:0}button:disabled{opacity:.5}details,.box{border:1px solid var(--divider-color);border-radius:10px;padding:16px;margin:16px 0;background:var(--card-background-color)}label{display:block;margin:10px 0}input,select{display:block;width:100%;box-sizing:border-box;max-width:800px;padding:10px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color)}input[type=checkbox]{display:inline;width:auto}a{color:var(--primary-color);margin:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.error{padding:12px;background:#b71c1c;color:white}.snapshot{max-height:450px;overflow:auto;border:2px solid #888;padding:16px;background:white;color:black}.snapshot [data-node]:hover{outline:2px solid #c62828;cursor:crosshair}.snapshot .chosen{outline:3px solid #c62828}.product-summary{display:flex;gap:12px;align-items:center;flex-wrap:wrap;cursor:pointer;padding:14px}.product-summary strong{flex:1}.product-body{padding:0 16px 16px}.metric{white-space:nowrap}.seller{border-top:1px solid var(--divider-color);padding:10px 0}small{display:block;margin:8px 0}`;r.append(style);
     const header=this.el('header');header.append(this.button('☰',()=>this.dispatchEvent(new CustomEvent('hass-toggle-menu',{bubbles:true,composed:true}))),this.el('h2','PriceGauge'),this.button('Products',()=>{this.viewMode='products';this.render();}),this.button('Logs',()=>{this.viewMode='logs';this.render();}),this.button('Settings',()=>{this.viewMode='settings';this.render();}),this.button('Refresh',()=>this.load()),this.button('Add product',()=>{this.draft={url:'',name:'',ean:'',currency:'EUR'};this.inspectData=null;this.selected=null;this.render();},true));r.append(header);
     if(this.error){const error=this.el('div',this.error);error.className='error';r.append(error);}
     if(this.busy)r.append(this.el('p','Operation in progress…'));
@@ -23,14 +23,32 @@ class PriceGaugePanel extends HTMLElement {
     if(!this.data.products.length)r.append(this.el('p','No products tracked yet. Press the red Add product button.'));
     r.append(this.button('Check tracked prices now',()=>this.run('check',async()=>{await this.api('check');await this.load();})));
     for(const p of this.data.products){
-      const card=this.el('article');card.append(this.el('h3',p.name),this.el('p',`Observed sample average: ${this.format(p.summary.average,p.currency)} | Minimum: ${this.format(p.summary.minimum,p.currency)} | Samples: ${p.summary.count}`));
-      card.append(this.button('Add website',()=>this.newSeller(p)),this.button('Find other sellers',()=>this.run('discover',async()=>{const result=await this.api('discover',{product_id:p.id});if(result.status!=='ok')this.error=result.error||result.status;this.data=await this.api('state');})),this.button('Remove product',()=>{if(confirm('Remove this product and its tracked sellers/statistics?'))this.run('remove',async()=>{await this.api('remove',{product_id:p.id});await this.load();});}));
-      for(const s of p.sellers){const row=this.el('div');row.className='seller';row.append(this.link(s.url,s.store),this.el('p',`Current: ${this.format(s.price,p.currency)} | Average: ${this.format(s.average,p.currency)} | Minimum: ${this.format(s.stats?.min,p.currency)} | ${s.status}`));if(s.error)row.append(this.el('pre',s.error));if(s.legacy_minimum!=null)row.append(this.el('small',`Legacy observed minimum: ${this.format(s.legacy_minimum,p.currency)} (not included in new averages)`));row.append(this.button('Re-select price',()=>this.newSeller(p,s.url,s.id)),this.button('Remove website',()=>{if(confirm('Remove seller and its statistics?'))this.run('remove',async()=>{await this.api('remove',{product_id:p.id,seller_id:s.id});await this.load();});}));card.append(row);}
-      if(p.offers?.length){card.append(this.el('h4','Other sellers: select candidates, then validate their retailer price'));
+      const card=this.el('details');card.open=this.openProducts.has(p.id);
+      card.ontoggle=()=>{if(card.open)this.openProducts.add(p.id);else this.openProducts.delete(p.id);};
+      const summary=this.el('summary');summary.className='product-summary';
+      summary.append(this.el('strong',p.name),this.el('span',`Avg ${this.format(p.summary.average,p.currency)}`),this.el('span',`Min ${this.format(p.summary.minimum,p.currency)}`),this.el('span',`Max ${this.format(p.summary.maximum,p.currency)}`),this.el('span',`${p.summary.retailers} shops`));
+      card.append(summary);
+      const body=this.el('div');body.className='product-body';
+      body.append(this.button('Add website',()=>this.newSeller(p)),this.button('Find other sellers',()=>this.run('discover',async()=>{const result=await this.api('discover',{product_id:p.id});if(result.status!=='ok')this.error=result.error||result.status;this.data=await this.api('state');})),this.button('Remove product',()=>{if(confirm('Remove this product and its tracked sellers?'))this.run('remove',async()=>{await this.api('remove',{product_id:p.id});await this.load();});}));
+      for(const store of p.sellers){
+        const row=this.el('div');row.className='seller';
+        row.append(this.link(store.url,store.store),this.el('span',`Current: ${this.format(store.price,p.currency)} | ${store.status}`));
+        if(store.error)row.append(this.el('pre',store.error));
+        row.append(this.button('Re-select price',()=>this.newSeller(p,store.url,store.id)),this.button('Remove website',()=>{if(confirm('Remove this retailer?'))this.run('remove',async()=>{await this.api('remove',{product_id:p.id,seller_id:store.id});await this.load();});}));
+        body.append(row);
+      }
+      if(p.offers?.length){
+        body.append(this.el('h4','Other sellers: high-similarity candidates'));
         const selected=[];
-        for(const offer of p.offers){const label=this.el('label'),cb=this.el('input');cb.type='checkbox';cb.onchange=()=>{if(cb.checked)selected.push(offer);else{const i=selected.indexOf(offer);if(i>=0)selected.splice(i,1);}};label.append(cb,document.createTextNode(` ${offer.seller}: ${offer.price_text} — ${offer.title}`),this.link(offer.url,'Open result'));card.append(label);}
-        card.append(this.el('small','Candidates are not verified EAN matches. Google Shopping links may need replacing with the actual retailer product URL.'),this.button('Configure selected sellers',()=>{if(!selected.length){this.error='Select at least one seller';this.render();return;}this.queue=selected.slice(1).map(o=>({p,offer:o}));this.newSeller(p,selected[0].url); }));
-      }r.append(card);
+        for(const offer of p.offers){
+          const label=this.el('label'),cb=this.el('input');cb.type='checkbox';
+          cb.onchange=()=>{if(cb.checked)selected.push(offer);else{const i=selected.indexOf(offer);if(i>=0)selected.splice(i,1);}};
+          const similarity=offer.similarity!=null?` (${Math.round(offer.similarity*100)}% title match)`:'';
+          label.append(cb,document.createTextNode(` ${offer.seller}: ${offer.price_text} — ${offer.title}${similarity}`),this.link(offer.url,'Open result'));body.append(label);
+        }
+        body.append(this.el('small','Candidates are conservatively title-filtered but are still not identity/EAN proof. Validate the exact retailer page before tracking.'),this.button('Configure selected sellers',()=>{if(!selected.length){this.error='Select at least one seller';this.render();return;}this.queue=selected.slice(1).map(o=>({p,offer:o}));this.newSeller(p,selected[0].url);}));
+      }
+      card.append(body);r.append(card);
     }
   }
   newSeller(p,url='',replaceId=''){this.draft={product_id:p.id,name:p.name,ean:p.ean,currency:p.currency,url,replace_id:replaceId};this.inspectData=null;this.selected=null;this.render();}

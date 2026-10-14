@@ -59,10 +59,27 @@ class ParserTests(unittest.TestCase):
         s={}
         for price in (10,20,15):manager.record(s,price,'now')
         summary=manager.summary({'sellers':[s]})
-        self.assertEqual(summary,{'count':3,'average':15,'minimum':10})
+        self.assertEqual(summary,{'retailers':1,'average':15.0,'minimum':15.0,'maximum':15.0})
     def test_cycle(self):
         start,end=manager.cycle(datetime(2026,2,28,tzinfo=timezone.utc),31)
         self.assertEqual(start.day,28);self.assertEqual(end.day,31)
+
+    def test_current_product_market_summary(self):
+        product={'sellers':[{'price':100,'status':'ok'},{'price':120,'status':'ok'},{'price':140,'status':'ok'},{'price':1,'status':'error'}]}
+        self.assertEqual(manager.summary(product),{'retailers':3,'average':120,'minimum':100,'maximum':140})
+    def test_error_retailer_excluded_from_market_summary(self):
+        product={'sellers':[{'price':100,'status':'ok'},{'price':20,'status':'error'}]}
+        self.assertEqual(manager.summary(product)['minimum'],100)
+    def test_discovery_exact_model(self):
+        product={'name':'Sony WH-1000XM6 Wireless Headphones'}
+        score,reason=manager.offer_similarity(product,'Sony WH-1000XM6 Wireless Noise Cancelling Headphones Black')
+        self.assertEqual(reason,'ok');self.assertGreaterEqual(score,0.68)
+    def test_discovery_rejects_accessory(self):
+        score,reason=manager.offer_similarity({'name':'Sony WH-1000XM6'},'Protective Case for Sony WH-1000XM6')
+        self.assertEqual(score,0);self.assertEqual(reason,'accessory')
+    def test_discovery_rejects_wrong_model(self):
+        score,reason=manager.offer_similarity({'name':'Sony WH-1000XM6'},'Sony WH-1000XM5 Headphones')
+        self.assertEqual(score,0);self.assertEqual(reason,'model_mismatch')
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DB.clear()
@@ -70,7 +87,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.hass=types.SimpleNamespace(async_add_executor_job=executor,bus=types.SimpleNamespace(async_fire=Mock()))
         self.m=manager.Manager(self.hass)
         self.m.net.start=AsyncMock();self.m.net.html=AsyncMock(return_value=HTML)
-        self.m.net.shopping=AsyncMock(return_value={'shopping_results':[{'source':'Shop','title':'Product','price':'EUR 12','product_link':'https://example.com/p'}]})
+        self.m.net.shopping=AsyncMock(return_value={'shopping_results':[{'source':'Shop','title':'P','price':'EUR 12','product_link':'https://example.com/p'}]})
         await self.m.start()
     async def add(self):
         snap=await self.m.inspect('https://example.com/product')

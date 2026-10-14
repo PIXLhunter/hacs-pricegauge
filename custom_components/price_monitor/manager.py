@@ -6,6 +6,8 @@ from collections import deque
 from datetime import datetime,timezone,timedelta
 import hashlib
 import logging
+import re
+from difflib import SequenceMatcher
 import uuid
 from urllib.parse import urlsplit
 from homeassistant.helpers.storage import Store
@@ -33,11 +35,40 @@ def record(s,price,at):
     del history[:-1000]
 
 def summary(product):
-    sellers=product.get('sellers',[])
-    count=sum(s.get('stats',{}).get('count',0) for s in sellers)
-    total=sum(s.get('stats',{}).get('sum',0) for s in sellers)
-    mins=[s['stats']['min'] for s in sellers if s.get('stats',{}).get('min') is not None]
-    return {'count':count,'average':total/count if count else None,'minimum':min(mins) if mins else None}
+    """Current market snapshot across successful tracked retailers, not history."""
+    prices=[float(s['price']) for s in product.get('sellers',[])
+            if s.get('status')=='ok' and isinstance(s.get('price'),(int,float))]
+    return {'retailers':len(prices),
+            'average':sum(prices)/len(prices) if prices else None,
+            'minimum':min(prices) if prices else None,
+            'maximum':max(prices) if prices else None}
+
+ACCESSORY_WORDS={
+    'case','cover','cable','adapter','charger','stand','mount','holder','strap','screen','protector',
+    'replacement','earpad','earpads','sleeve','skin','dock','bag','pouch','battery','remote','filter',
+    'hoes','hoesje','kabel','adapter','lader','houder','standaard','bandje','beschermer','vervanging',
+    'oorkussen','oorkussens','tas','etui','accu','afstandsbediening'
+}
+STOP_WORDS={'the','and','with','for','van','met','een','de','het','voor','new','nieuw','wireless','draadloos'}
+
+def _tokens(text):
+    return re.findall(r'[a-z0-9]+',str(text).casefold())
+
+def offer_similarity(product, title):
+    """Conservative title match. Discovery is candidate filtering, not identity proof."""
+    wanted=_tokens(product.get('name','')); found=_tokens(title)
+    if not wanted or not found:return 0.0,'empty_title'
+    wanted_set=set(wanted);found_set=set(found)
+    # Accessory language in a result is a strong negative unless it is part of the product name itself.
+    if (found_set & ACCESSORY_WORDS) - wanted_set:return 0.0,'accessory'
+    # Model-like identifiers (letters+digits, or long numbers) must survive exactly.
+    models={t for t in wanted_set if len(t)>=4 and ((any(c.isalpha() for c in t) and any(c.isdigit() for c in t)) or t.isdigit())}
+    if models and not models.issubset(found_set):return 0.0,'model_mismatch'
+    significant=[t for t in wanted if len(t)>=3 and t not in STOP_WORDS]
+    coverage=sum(t in found_set for t in significant)/len(significant) if significant else (1.0 if wanted_set.issubset(found_set) else 0.0)
+    sequence=SequenceMatcher(None,' '.join(wanted),' '.join(found)).ratio()
+    score=0.7*coverage+0.3*sequence
+    return score, 'ok' if coverage>=0.72 and score>=0.68 else 'low_similarity'
 
 class Manager:
     def __init__(self,hass):
@@ -67,6 +98,8 @@ class Manager:
         p=next((p for p in self.data['products'] if p['id']==pid),None)
         if not p:raise PriceError('Product not found')
         return p
+    def view_product_summary(self,pid):
+        return summary(self.product(pid))
     def view(self):
         d=copy.deepcopy(self.data);d['settings'].pop('api_key',None)
         d['settings']['has_api_key']=bool(self.data['settings'].get('api_key'))
@@ -79,7 +112,6 @@ class Manager:
             p['summary']=summary(p)
             for s in p['sellers']:
                 s.pop('history',None)
-                stats=s.get('stats',{});s['average']=stats.get('sum',0)/stats['count'] if stats.get('count') else None
         return d
     async def inspect(self,url,currency='EUR',ean=''):
         valid_url(url);self.log('INFO','inspect_start','Fetching public retailer page')
@@ -188,7 +220,7 @@ class Manager:
             if not force and g.get('last') and (now()-datetime.fromisoformat(g['last'])).total_seconds()<(end-start).total_seconds()/share:
                 return {'status':'cached_not_due'}
             b['used']+=1;g['used']+=1;g['last']=now().isoformat();await self.save()
-            query=p['ean'] or p['name']
+            query=f'\"{p["ean"]}\" {p["name"]}' if p.get('ean') else p['name']
         self.log('INFO','discovery_start','One quota-reserved Shopping request',pid)
         try:
             data=await self.net.shopping({'engine':'google_shopping','q':query,'api_key':s['api_key'],'gl':s['country'],'hl':s['language']})
@@ -199,8 +231,14 @@ class Manager:
                 if not isinstance(item,dict):continue
                 link=item.get('product_link') or item.get('link')
                 if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):link=''
-                offers.append({'title':str(item.get('title',''))[:300],'seller':str(item.get('source',''))[:200],
-                    'price_text':str(item.get('price',''))[:100],'url':link,'ean_verified':False})
+                title=str(item.get('title',''))[:300]
+                score,reason=offer_similarity(p,title)
+                if score<=0:continue
+                if reason!='ok':continue
+                offers.append({'title':title,'seller':str(item.get('source',''))[:200],
+                    'price_text':str(item.get('price',''))[:100],'url':link,'ean_verified':False,
+                    'similarity':round(score,3)})
+            offers.sort(key=lambda offer:offer.get('similarity',0),reverse=True)
             async with self.lock:
                 p=self.product(pid);p['offers']=offers;p['discovered_at']=now().isoformat()
                 self.log('INFO','discovery_done',f'{len(offers)} candidate sellers cached; exact variants unverified',pid);await self.save()

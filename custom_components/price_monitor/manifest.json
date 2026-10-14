@@ -1,7 +1,7 @@
 {
   "domain": "price_monitor",
   "name": "PriceGauge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "config_flow": true,
   "documentation": "https://github.com/PIXLhunter/hacs-pricegauge",
   "issue_tracker": "https://github.com/PIXLhunter/hacs-pricegauge/issues",

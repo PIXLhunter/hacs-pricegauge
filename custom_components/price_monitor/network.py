@@ -28,7 +28,7 @@ class Network:
     def __init__(self):self.session=None;self.locks={};self.backoff={}
     async def start(self):
         self.session=aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver(),limit=8),
-            timeout=aiohttp.ClientTimeout(total=35),headers={'User-Agent':'HomeAssistant-PriceGauge/0.3.0'})
+            timeout=aiohttp.ClientTimeout(total=35),headers={'User-Agent':'HomeAssistant-PriceGauge/0.3.1'})
     async def close(self):
         if self.session:await self.session.close()
     async def html(self,url):

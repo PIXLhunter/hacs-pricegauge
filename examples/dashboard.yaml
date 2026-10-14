@@ -1,21 +1,8 @@
-# Replace entity IDs with your actual entities.
-type: vertical-stack
-cards:
-  - type: entities
-    entities:
-      - sensor.your_product_price
-      - sensor.your_product_lowest_observed_price
-      - binary_sensor.your_product_target_reached
-      - button.your_product_discover_stores_now
-  - type: history-graph
-    hours_to_show: 168
-    entities:
-      - sensor.your_product_price
-  - type: markdown
-    title: Cached shopping candidates
-    content: |
-      {% for offer in state_attr('sensor.your_product_shopping_candidates', 'offers') or [] %}
-      **{{ offer.seller }}**: {{ offer.price_text }} - {{ offer.title }}
-      {% if offer.link %}[Open result]({{ offer.link }}){% endif %}
-
-      {% endfor %}
+# Replace entity IDs with entities created for your product.
+type: entities
+title: PriceGauge product
+entities:
+  - sensor.your_product_product_average
+  - sensor.your_product_product_minimum
+  - sensor.your_product_product_maximum
+  - sensor.your_product_retailer_price

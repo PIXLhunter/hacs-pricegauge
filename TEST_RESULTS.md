@@ -1,12 +1,5 @@
-# Offline validation
+# PriceGauge 0.3.1 offline validation
 
-- 38 tests passed: 13 quota tests, 10 mocked lifecycle/coordinator tests, 15 parser tests.
-- Python AST, JSON and YAML parsing passed.
-- Publication preflight passed in a temporary copy configured with a synthetic owner.
-- The distributed manifest still needs your real owner via prepare_repository.py.
-- ZIP integrity and expected integration file inventory verified.
-
-No live Home Assistant runtime, HACS installation, GitHub Actions execution, retailer
-HTTP or SerpApi account test was performed. Mocked lifecycle tests do not establish
-real Home Assistant compatibility. This is a complete publication package, not a
-certification of production readiness or HACS default-catalog approval.
+38 Python tests pass, including current-product aggregation and strict seller-title filtering.
+5 frontend minimal-DOM smoke checks pass. JavaScript syntax and repository preflight pass.
+Tests are synthetic/mocked and do not replace validation on a live Home Assistant instance or live retailers.

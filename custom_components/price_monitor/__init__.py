@@ -22,7 +22,7 @@ async def async_setup(hass,config):
         await hass.http.async_register_static_paths([StaticPathConfig('/pricegauge-ui',str(Path(__file__).parent/'frontend'),False)])
         websocket_api.async_register_command(hass,command)
         frontend.async_register_built_in_panel(hass,'custom',sidebar_title='PriceGauge',sidebar_icon='mdi:tag-outline',
-            frontend_url_path='pricegauge',require_admin=True,config={'_panel_custom':{
+            frontend_url_path='pricegauge',require_admin=False,config={'_panel_custom':{
                 'name':'pricegauge-panel','module_url':f'/pricegauge-ui/panel.js?v={VERSION}',
                 'embed_iframe':False,'trust_external':False}})
         async def tick(_):
