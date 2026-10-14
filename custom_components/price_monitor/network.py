@@ -58,16 +58,22 @@ class Network:
                         if len(raw)>4*1024*1024:raise PriceError('Page exceeds 4 MiB limit')
                     return raw.decode(r.charset or 'utf-8',errors='replace')
             raise PriceError('Too many retailer redirects')
-    async def shopping(self,params):
+    async def serpapi(self,params):
+        # Uses the same persistent aiohttp session. Query parameters are never logged here.
         async with self.session.get('https://serpapi.com/search.json',params=params,allow_redirects=False) as r:
             if r.status in (401,403):raise PriceError('SerpApi key rejected; update it in GUI settings')
+            if r.status==429:raise PriceError('SerpApi rate limit reached (HTTP 429)')
             if r.status!=200:raise PriceError(f'SerpApi returned HTTP {r.status}')
             raw=bytearray()
             async for chunk in r.content.iter_chunked(65536):
                 raw.extend(chunk)
-                if len(raw)>4*1024*1024:raise PriceError('Discovery response too large')
+                if len(raw)>4*1024*1024:raise PriceError('SerpApi response too large')
             import json
             try:data=json.loads(raw)
-            except ValueError as err:raise PriceError('Invalid discovery JSON') from err
-            if not isinstance(data,dict) or data.get('error'):raise PriceError('SerpApi error; check account/quota')
+            except ValueError as err:raise PriceError('Invalid SerpApi JSON') from err
+            if not isinstance(data,dict):raise PriceError('Invalid SerpApi response')
+            if data.get('error'):raise PriceError(f"SerpApi error: {str(data['error'])[:200]}")
             return data
+
+    async def shopping(self,params):
+        return await self.serpapi(params)

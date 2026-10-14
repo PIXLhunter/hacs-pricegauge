@@ -240,11 +240,15 @@ class Manager:
             async with self.lock:await self.save()
             return {'status':'failed','error':message}
     async def resolve_offer(self,pid,candidate_id):
+        """Resolve one strict Shopping candidate to direct retailer offers."""
         async with self.lock:
             product=self.product(pid);settings=copy.deepcopy(self.data['settings'])
             offer=next((o for o in product.get('offers',[]) if o.get('id')==candidate_id),None)
             if not offer:raise PriceError('Discovery candidate not found; run discovery again')
-            if offer.get('stores'):return {'status':'cached','count':len(offer['stores'])}
+            # Non-empty resolved stores are durable and free to reopen.
+            if offer.get('stores'):
+                self.log('INFO','offer_resolution_cache',f"Using {len(offer['stores'])} cached direct stores",pid)
+                return {'status':'cached','count':len(offer['stores'])}
             if not settings.get('api_key'):raise PriceError('No SerpApi key configured')
             identifier=('page_token',offer.get('page_token')) if offer.get('page_token') else ('product_id',offer.get('product_id'))
             if not identifier[1]:raise PriceError('Candidate has no Product API identifier')
@@ -252,33 +256,49 @@ class Manager:
             if budget.get('cycle')!=start.isoformat():budget.update(cycle=start.isoformat(),used=0,products={})
             total=max(0,settings['monthly_budget']-settings['reserve']);group=budget.setdefault('products',{}).setdefault(pid,{'used':0})
             if budget['used']>=total:raise PriceError('SerpApi account budget exhausted')
-            budget['used']+=1;group['used']=group.get('used',0)+1;await self.save()
-        self.log('INFO','offer_resolution_start','Resolving direct stores with one reserved Product API request',pid)
+            budget['used']+=1;group['used']=group.get('used',0)+1
+            await self.save()  # Reserve before I/O. Failed/uncertain requests remain counted locally.
+        self.log('INFO','offer_resolution_request',f'Calling google_product using {identifier[0]}; local account usage now {budget["used"]}/{total}',pid)
         params={'engine':'google_product',identifier[0]:identifier[1],'offer_view':'true','api_key':settings['api_key'],'gl':settings['country'],'hl':settings['language']}
-        try:data=await self.net.shopping(params)
+        try:data=await self.net.serpapi(params)
         except Exception as err:
             message=str(err) if isinstance(err,PriceError) else f'Offer resolution failed ({type(err).__name__})';self.log('ERROR','offer_resolution_failed',message,pid);raise PriceError(message) from None
+        metadata=data.get('search_metadata',{}) if isinstance(data.get('search_metadata',{}),dict) else {}
         results=data.get('product_results',{})
         if not isinstance(results,dict):raise PriceError('Invalid Google Product response')
-        if offer_similarity(product,str(results.get('title','')))[1]!='ok':raise PriceError('Resolved product does not match tracked product')
-        stores=[]
-        for store in results.get('stores',[]) if isinstance(results.get('stores',[]),list) else []:
+        resolved_title=str(results.get('title') or offer.get('title') or '')
+        product_score,product_reason=offer_similarity(product,resolved_title)
+        raw_stores=results.get('stores',[]) if isinstance(results.get('stores',[]),list) else []
+        search_id=str(metadata.get('id',''))[:80];search_status=str(metadata.get('status',''))[:40]
+        self.log('INFO','offer_resolution_response',f'Product API response id={search_id or "unknown"} status={search_status or "unknown"}; product_match={product_reason}; raw_stores={len(raw_stores)}',pid)
+        if product_reason!='ok':raise PriceError(f'Resolved Google product does not match tracked product ({product_reason})')
+        stores=[];reject={'invalid_link':0,'google_link':0,'condition':0}
+        for store in raw_stores:
             if not isinstance(store,dict):continue
-            link=store.get('link');title=str(store.get('title') or results.get('title') or '')[:300]
-            if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):continue
+            link=store.get('link');title=str(store.get('title') or resolved_title)[:300]
+            if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):
+                reject['invalid_link']+=1;continue
             host=(urlsplit(link).hostname or '').lower()
-            if host=='google.com' or host.endswith('.google.com') or host=='serpapi.com' or host.endswith('.serpapi.com'):continue
-            score,reason=offer_similarity(product,title);condition=str(store.get('condition','')).casefold()
-            if reason!='ok' or condition in ('refurbished','used','pre-owned'):continue
-            stores.append({'name':str(store.get('name',''))[:200],'title':title,'url':link,'price_text':str(store.get('price',''))[:100],'price':store.get('extracted_price'),'similarity':round(score,3)})
+            if host=='google.com' or host.endswith('.google.com') or host=='serpapi.com' or host.endswith('.serpapi.com'):
+                reject['google_link']+=1;continue
+            condition=str(store.get('condition','')).casefold().strip()
+            if any(word in condition for word in ('refurbished','used','pre-owned','preowned','second-hand','renewed')):
+                reject['condition']+=1;continue
+            # Product API stores belong to the already-validated product. Store titles are often abbreviated,
+            # so repeating the strict Shopping-title matcher here incorrectly removes valid offers.
+            stores.append({'name':str(store.get('name',''))[:200] or host,'title':title,'url':link,
+                'price_text':str(store.get('price',''))[:100],'price':store.get('extracted_price'),
+                'condition':str(store.get('condition',''))[:80]})
         unique={}
         for store in stores:unique.setdefault(store['url'],store)
-        stores=sorted(unique.values(),key=lambda x:x['similarity'],reverse=True)[:40]
+        stores=list(unique.values())[:40]
         async with self.lock:
             current=next((o for o in self.product(pid).get('offers',[]) if o.get('id')==candidate_id),None)
-            if current is not None:current['stores']=stores;current['resolved_at']=now().isoformat()
-            self.log('INFO','offer_resolution_done',f'{len(stores)} direct stores resolved',pid);await self.save()
-        return {'status':'ok','count':len(stores)}
+            if current is not None:
+                current['stores']=stores;current['resolved_at']=now().isoformat();current['resolve_diagnostics']={'search_id':search_id,'status':search_status,'raw_stores':len(raw_stores),'accepted':len(stores),'rejected':reject}
+            self.log('INFO','offer_resolution_done',f'{len(stores)}/{len(raw_stores)} direct stores accepted; rejected invalid={reject["invalid_link"]}, google={reject["google_link"]}, condition={reject["condition"]}',pid);await self.save()
+        # Empty store sets are intentionally not treated as cached by the early check, allowing a retry.
+        return {'status':'ok','count':len(stores),'raw_count':len(raw_stores),'search_id':search_id,'search_status':search_status}
 
     async def poll(self,force=False):
         if self.poll_lock.locked():return

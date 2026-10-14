@@ -70,7 +70,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.hass=types.SimpleNamespace(async_add_executor_job=executor,bus=types.SimpleNamespace(async_fire=Mock()))
         self.m=manager.Manager(self.hass)
         self.m.net.start=AsyncMock();self.m.net.html=AsyncMock(return_value=HTML)
-        self.m.net.shopping=AsyncMock(return_value={'shopping_results':[{'source':'Shop','title':'P','price':'EUR 12','product_link':'https://example.com/p'}]})
+        self.m.net.serpapi=AsyncMock();self.m.net.shopping=AsyncMock(return_value={'shopping_results':[{'source':'Shop','title':'P','price':'EUR 12','product_link':'https://example.com/p'}]})
         await self.m.start()
     async def add(self):
         snap=await self.m.inspect('https://example.com/product')
@@ -129,5 +129,21 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(parser.PriceError):await self.m.select('unknown')
     async def test_invalid_settings(self):
         with self.assertRaises(parser.PriceError):await self.m.settings({'reserve':999})
+
+    async def test_product_api_accepts_abbreviated_store_title_and_caches(self):
+        pid,_,_=await self.add();await self.m.settings({'api_key':'secret'})
+        product=self.m.product(pid)
+        product['offers']=[{'id':'candidate','title':'P','product_id':'123','page_token':'','stores':[]}]
+        self.m.net.serpapi.return_value={'search_metadata':{'id':'search123','status':'Success'},'product_results':{'title':'P','stores':[{'name':'Real Shop','link':'https://shop.example/p','title':'P retail edition','price':'EUR 12','extracted_price':12}]}}
+        result=await self.m.resolve_offer(pid,'candidate')
+        self.assertEqual(result['count'],1);self.assertEqual(product['offers'][0]['stores'][0]['url'],'https://shop.example/p')
+        again=await self.m.resolve_offer(pid,'candidate');self.assertEqual(again['status'],'cached');self.m.net.serpapi.assert_awaited_once()
+
+    async def test_product_api_zero_store_can_retry(self):
+        pid,_,_=await self.add();await self.m.settings({'api_key':'secret'})
+        self.m.product(pid)['offers']=[{'id':'candidate','title':'P','product_id':'123','page_token':'','stores':[]}]
+        self.m.net.serpapi.return_value={'search_metadata':{'id':'zero','status':'Success'},'product_results':{'title':'P','stores':[]}}
+        first=await self.m.resolve_offer(pid,'candidate');second=await self.m.resolve_offer(pid,'candidate')
+        self.assertEqual(first['count'],0);self.assertEqual(second['count'],0);self.assertEqual(self.m.net.serpapi.await_count,2)
     async def test_log_visibility(self):
         self.m.log('ERROR','test','visible');self.assertEqual(self.m.view()['logs'][-1]['message'],'visible')

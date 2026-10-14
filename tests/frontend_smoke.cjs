@@ -12,3 +12,6 @@ p.draft=null;p.error='connection failed';p.render();assert(all(p.shadowRoot).som
 p.newSeller({id:'p',name:'P',ean:'',currency:'EUR'},'https://example.com/p');assert(p.draft.product_id==='p');
 p.viewMode='logs';p.draft=null;p.render();assert(all(p.shadowRoot).some(n=>n.textContent==='Download logs'));
 console.log('5 frontend DOM smoke checks passed');
+
+const chartPanel=new Panel();chartPanel.data={products:[],settings:{},logs:[]};const chart=chartPanel.chart({currency:'EUR',sellers:[{store:'Shop A',history:[{at:'2026-10-13T00:00:00Z',price:100},{at:'2026-10-14T00:00:00Z',price:110}]}]});assert(all(chart).some(n=>n.className==='legend-item'));
+console.log('Legend smoke check passed');
