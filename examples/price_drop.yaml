@@ -1,4 +1,4 @@
-alias: PriceGauge - price drop
+alias: Price Monitor - price drop
 triggers:
   - trigger: event
     event_type: price_monitor_price_drop
@@ -7,7 +7,7 @@ actions:
     data:
       title: Price drop
       message: >-
-        {{ trigger.event.data.name }}: {{ trigger.event.data.previous_price }} ->
-        {{ trigger.event.data.price }} {{ trigger.event.data.currency }}.
-        {{ trigger.event.data.url }}
+        {{ trigger.event.data.name }}:
+        {{ trigger.event.data.previous_price }} -> {{ trigger.event.data.price }}
+        {{ trigger.event.data.currency }}. {{ trigger.event.data.url }}
 mode: queued

@@ -1,10 +1,9 @@
-# PriceGauge 0.3.1
+# PriceGauge 0.3.2
 
-- Products are collapsed by default; expand a product to manage its retailers.
-- Product headline and HA entities expose current-retailer average, minimum and maximum.
-- Retailer HA entities expose current price only. Historical retailer samples remain stored internally but are not used for product aggregates.
-- Sidebar and GUI WebSocket operations no longer require Home Assistant administrator access. They remain available only through an authenticated Home Assistant session.
-- Shopping discovery now rejects obvious accessory results, requires exact model-like identifiers, applies strict title-token similarity, and sorts accepted candidates by similarity. EAN products use EAN plus product name in the search query.
-- Removed the obsolete custom_components_0.2.1 backup tree from the repository.
-
-All discovered sellers remain candidates only and must still pass retailer-page price validation.
+- Persistent retailer HTTP session now sends ordinary browser-compatible content headers and retains cookies between requests. It does not bypass CAPTCHA/challenge pages.
+- Product cards are collapsible and display current-retailer average/minimum/maximum. Retailers show current price only.
+- Added per-retailer historical price lines to the expanded product GUI using the stored recent price samples.
+- Fixed `undefined shops` by always exposing `summary.retailers` and rendering a singular/plural shop count.
+- Seller discovery is stricter: model identifiers and product-defining terms must match; bundles, packs, refurbished/used goods, accessories, Max/Pro/Industrial substitutions for an Ultra product are rejected by identity terms.
+- Google Shopping `product_link` values are no longer labelled as retailer URLs. Candidates without a direct non-Google URL are displayed as unavailable for automatic enrollment.
+- Authenticated non-admin users can use PriceGauge.

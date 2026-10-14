@@ -35,40 +35,36 @@ def record(s,price,at):
     del history[:-1000]
 
 def summary(product):
-    """Current market snapshot across successful tracked retailers, not history."""
-    prices=[float(s['price']) for s in product.get('sellers',[])
-            if s.get('status')=='ok' and isinstance(s.get('price'),(int,float))]
-    return {'retailers':len(prices),
-            'average':sum(prices)/len(prices) if prices else None,
-            'minimum':min(prices) if prices else None,
-            'maximum':max(prices) if prices else None}
+    prices=[float(s['price']) for s in product.get('sellers',[]) if s.get('status')=='ok' and isinstance(s.get('price'),(int,float))]
+    return {'retailers':len(prices),'average':sum(prices)/len(prices) if prices else None,
+            'minimum':min(prices) if prices else None,'maximum':max(prices) if prices else None}
 
-ACCESSORY_WORDS={
-    'case','cover','cable','adapter','charger','stand','mount','holder','strap','screen','protector',
-    'replacement','earpad','earpads','sleeve','skin','dock','bag','pouch','battery','remote','filter',
-    'hoes','hoesje','kabel','adapter','lader','houder','standaard','bandje','beschermer','vervanging',
-    'oorkussen','oorkussens','tas','etui','accu','afstandsbediening'
-}
-STOP_WORDS={'the','and','with','for','van','met','een','de','het','voor','new','nieuw','wireless','draadloos'}
-
-def _tokens(text):
-    return re.findall(r'[a-z0-9]+',str(text).casefold())
-
-def offer_similarity(product, title):
-    """Conservative title match. Discovery is candidate filtering, not identity proof."""
-    wanted=_tokens(product.get('name','')); found=_tokens(title)
-    if not wanted or not found:return 0.0,'empty_title'
-    wanted_set=set(wanted);found_set=set(found)
-    # Accessory language in a result is a strong negative unless it is part of the product name itself.
-    if (found_set & ACCESSORY_WORDS) - wanted_set:return 0.0,'accessory'
-    # Model-like identifiers (letters+digits, or long numbers) must survive exactly.
-    models={t for t in wanted_set if len(t)>=4 and ((any(c.isalpha() for c in t) and any(c.isdigit() for c in t)) or t.isdigit())}
-    if models and not models.issubset(found_set):return 0.0,'model_mismatch'
-    significant=[t for t in wanted if len(t)>=3 and t not in STOP_WORDS]
-    coverage=sum(t in found_set for t in significant)/len(significant) if significant else (1.0 if wanted_set.issubset(found_set) else 0.0)
-    sequence=SequenceMatcher(None,' '.join(wanted),' '.join(found)).ratio()
-    score=0.7*coverage+0.3*sequence
-    return score, 'ok' if coverage>=0.72 and score>=0.68 else 'low_similarity'
+BAD_WORDS={'case','cover','cable','adapter','charger','stand','mount','holder','strap','protector','replacement','earpad','earpads','sleeve','dock','bag','pouch','battery','remote','filter','refurbished','renewed','used','bundle','bundel','pack','set','kit','industrial','hoes','hoesje','kabel','lader','houder','standaard','bandje','beschermer','vervanging','oorkussen','oorkussens','tas','etui','accu','afstandsbediening'}
+STOP={'the','and','with','for','van','met','een','de','het','voor','new','nieuw','wireless','draadloos'}
+def toks(text):return re.findall(r'[a-z0-9]+',str(text).casefold())
+def identifiers(text):
+    raw=str(text)
+    ids=set()
+    for value in re.findall(r'(?i)\b(?=[a-z0-9-]{4,}\b)(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)*\b',raw):ids.add(' '.join(toks(value)))
+    for value in re.findall(r'(?i)\b[a-z]{2,}(?:-[a-z0-9]{2,})+\b',raw):ids.add(' '.join(toks(value)))
+    return ids
+def offer_similarity(product,title):
+    wanted=toks(product.get('name','')); found=toks(title); ws=set(wanted);fs=set(found)
+    if not wanted or not found:return 0.0,'empty'
+    if ' '.join(wanted)==' '.join(found):return 1.0,'ok'
+    if (fs & BAD_WORDS)-ws:return 0.0,'variant_or_accessory'
+    ids=identifiers(product.get('name',''))
+    normalized=' '.join(found)
+    if ids and not all(i in normalized for i in ids):return 0.0,'identifier_mismatch'
+    significant=[t for t in wanted if len(t)>=3 and t not in STOP]
+    if not significant:return 0.0,'insufficient_identity'
+    coverage=sum(t in fs for t in significant)/len(significant)
+    # Product-defining final nouns/adjectives like Ultra must not silently become Max/Pro.
+    key=[t for t in significant if t not in {'ubiquiti','unifi','cloud','gateway','network','networks'}]
+    if key and not all(t in fs for t in key):return 0.0,'key_term_mismatch'
+    seq=SequenceMatcher(None,' '.join(wanted),' '.join(found)).ratio()
+    score=.75*coverage+.25*seq
+    return (score,'ok') if coverage>=.80 and score>=.78 else (0.0,'low_similarity')
 
 class Manager:
     def __init__(self,hass):
@@ -111,7 +107,7 @@ class Manager:
         for p in d['products']:
             p['summary']=summary(p)
             for s in p['sellers']:
-                s.pop('history',None)
+                s['history']=s.get('history',[])[-200:]
         return d
     async def inspect(self,url,currency='EUR',ean=''):
         valid_url(url);self.log('INFO','inspect_start','Fetching public retailer page')
@@ -233,12 +229,13 @@ class Manager:
                 if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):link=''
                 title=str(item.get('title',''))[:300]
                 score,reason=offer_similarity(p,title)
-                if score<=0:continue
                 if reason!='ok':continue
+                # Shopping product_link is commonly a Google product/search page, not a retailer URL.
+                direct=link if link and urlsplit(link).hostname and 'google.' not in urlsplit(link).hostname.lower() else ''
                 offers.append({'title':title,'seller':str(item.get('source',''))[:200],
-                    'price_text':str(item.get('price',''))[:100],'url':link,'ean_verified':False,
-                    'similarity':round(score,3)})
-            offers.sort(key=lambda offer:offer.get('similarity',0),reverse=True)
+                    'price_text':str(item.get('price',''))[:100],'url':direct,'ean_verified':False,
+                    'similarity':round(score,3),'needs_retailer_url':not bool(direct)})
+            offers.sort(key=lambda o:o.get('similarity',0),reverse=True)
             async with self.lock:
                 p=self.product(pid);p['offers']=offers;p['discovered_at']=now().isoformat()
                 self.log('INFO','discovery_done',f'{len(offers)} candidate sellers cached; exact variants unverified',pid);await self.save()

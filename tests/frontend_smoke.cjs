@@ -1,7 +1,7 @@
 // Minimal DOM contract test, not a real browser layout test.
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 class Node {constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.style={};this.isConnected=true;}append(...nodes){this.children.push(...nodes);}replaceChildren(){this.children=[];}attachShadow(){return this.shadowRoot=new Node('shadow');}setAttribute(){}addEventListener(){}dispatchEvent(){}click(){if(this.onclick)this.onclick();}}
-global.HTMLElement=Node;global.document={createElement:t=>new Node(t),createTextNode:t=>({textContent:t})};global.customElements={get:()=>null,define:(name,cls)=>global.Panel=cls};global.confirm=()=>true;
+global.HTMLElement=Node;global.document={createElement:t=>new Node(t),createElementNS:(ns,t)=>new Node(t),createTextNode:t=>({textContent:t})};global.customElements={get:()=>null,define:(name,cls)=>global.Panel=cls};global.confirm=()=>true;
 vm.runInThisContext(fs.readFileSync('custom_components/price_monitor/frontend/panel.js','utf8'));
 const p=new Panel();p.data={products:[],settings:{},logs:[]};p.render();
 function all(n){return [n,...n.children.flatMap(c=>c.children?all(c):[c])];}

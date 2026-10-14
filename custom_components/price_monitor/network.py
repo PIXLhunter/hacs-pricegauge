@@ -28,7 +28,13 @@ class Network:
     def __init__(self):self.session=None;self.locks={};self.backoff={}
     async def start(self):
         self.session=aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicResolver(),limit=8),
-            timeout=aiohttp.ClientTimeout(total=35),headers={'User-Agent':'HomeAssistant-PriceGauge/0.3.1'})
+            timeout=aiohttp.ClientTimeout(total=35),headers={
+                'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+                'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language':'nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Cache-Control':'no-cache',
+                'Upgrade-Insecure-Requests':'1'
+            })
     async def close(self):
         if self.session:await self.session.close()
     async def html(self,url):
