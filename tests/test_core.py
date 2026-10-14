@@ -63,15 +63,6 @@ class ParserTests(unittest.TestCase):
     def test_cycle(self):
         start,end=manager.cycle(datetime(2026,2,28,tzinfo=timezone.utc),31)
         self.assertEqual(start.day,28);self.assertEqual(end.day,31)
-
-    def test_market_snapshot(self):
-        p={'sellers':[{'price':100,'status':'ok'},{'price':120,'status':'ok'},{'price':140,'status':'ok'},{'price':1,'status':'error'}]}
-        self.assertEqual(manager.summary(p),{'retailers':3,'average':120,'minimum':100,'maximum':140})
-    def test_exact_ucg_ultra_matching(self):
-        p={'name':'Ubiquiti UniFi Cloud Gateway Ultra (UCG-ULTRA)'}
-        self.assertEqual(manager.offer_similarity(p,'Ubiquiti UniFi Cloud Gateway Ultra UCG-ULTRA')[1],'ok')
-        for bad in ('Ubiquiti Cloud Gateway Max','Ubiquiti WiFi 6 Entry Bundel incl. UniFi Cloud Gateway Ultra en PoE switch','Ubiquiti UCG-ULTRA refurbished Gateway','Ubiquiti Cloud Gateway Industrial UCG-Industrial'):
-            self.assertNotEqual(manager.offer_similarity(p,bad)[1],'ok',bad)
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DB.clear()

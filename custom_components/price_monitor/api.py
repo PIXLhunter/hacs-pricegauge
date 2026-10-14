@@ -31,11 +31,12 @@ async def command(hass,connection,msg):
             if set(p)-allowed:raise PriceError('Unknown setting')
             await manager.settings(p);result={'saved':True}
         elif action=='discover':result=await manager.discover(p['product_id'],force=True)
+        elif action=='resolve_offer':result=await manager.resolve_offer(p['product_id'],p['candidate_id'])
         elif action=='check':await manager.poll(force=True);result={'checked':True}
         elif action=='client_error':
             # Client diagnostics contain fixed stage/type only; no URLs, page text or secrets.
             stage=p.get('stage','frontend')
-            if stage not in ('inspect','select','add','remove','settings','discover','check','frontend'):stage='frontend'
+            if stage not in ('inspect','select','add','remove','settings','discover','resolve_offer','check','frontend'):stage='frontend'
             manager.log('ERROR','frontend_error',f'Frontend operation failed: {stage}')
             result={'logged':True}
         else:raise PriceError('Unknown GUI action')

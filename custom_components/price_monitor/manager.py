@@ -35,35 +35,29 @@ def record(s,price,at):
     del history[:-1000]
 
 def summary(product):
-    prices=[float(s['price']) for s in product.get('sellers',[]) if s.get('status')=='ok' and isinstance(s.get('price'),(int,float))]
-    return {'retailers':len(prices),'average':sum(prices)/len(prices) if prices else None,
-            'minimum':min(prices) if prices else None,'maximum':max(prices) if prices else None}
-
+    prices=[float(x['price']) for x in product.get('sellers',[]) if x.get('status')=='ok' and isinstance(x.get('price'),(int,float))]
+    return {'retailers':len(prices),'average':sum(prices)/len(prices) if prices else None,'minimum':min(prices) if prices else None,'maximum':max(prices) if prices else None}
 BAD_WORDS={'case','cover','cable','adapter','charger','stand','mount','holder','strap','protector','replacement','earpad','earpads','sleeve','dock','bag','pouch','battery','remote','filter','refurbished','renewed','used','bundle','bundel','pack','set','kit','industrial','hoes','hoesje','kabel','lader','houder','standaard','bandje','beschermer','vervanging','oorkussen','oorkussens','tas','etui','accu','afstandsbediening'}
 STOP={'the','and','with','for','van','met','een','de','het','voor','new','nieuw','wireless','draadloos'}
 def toks(text):return re.findall(r'[a-z0-9]+',str(text).casefold())
 def identifiers(text):
-    raw=str(text)
     ids=set()
-    for value in re.findall(r'(?i)\b(?=[a-z0-9-]{4,}\b)(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)*\b',raw):ids.add(' '.join(toks(value)))
-    for value in re.findall(r'(?i)\b[a-z]{2,}(?:-[a-z0-9]{2,})+\b',raw):ids.add(' '.join(toks(value)))
+    for v in re.findall(r'(?i)\b(?=[a-z0-9-]{4,}\b)(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)*\b',str(text)):ids.add(' '.join(toks(v)))
+    for v in re.findall(r'(?i)\b[a-z]{2,}(?:-[a-z0-9]{2,})+\b',str(text)):ids.add(' '.join(toks(v)))
     return ids
 def offer_similarity(product,title):
-    wanted=toks(product.get('name','')); found=toks(title); ws=set(wanted);fs=set(found)
+    wanted=toks(product.get('name',''));found=toks(title);ws=set(wanted);fs=set(found)
     if not wanted or not found:return 0.0,'empty'
     if ' '.join(wanted)==' '.join(found):return 1.0,'ok'
     if (fs & BAD_WORDS)-ws:return 0.0,'variant_or_accessory'
-    ids=identifiers(product.get('name',''))
-    normalized=' '.join(found)
+    ids=identifiers(product.get('name',''));normalized=' '.join(found)
     if ids and not all(i in normalized for i in ids):return 0.0,'identifier_mismatch'
     significant=[t for t in wanted if len(t)>=3 and t not in STOP]
     if not significant:return 0.0,'insufficient_identity'
     coverage=sum(t in fs for t in significant)/len(significant)
-    # Product-defining final nouns/adjectives like Ultra must not silently become Max/Pro.
     key=[t for t in significant if t not in {'ubiquiti','unifi','cloud','gateway','network','networks'}]
     if key and not all(t in fs for t in key):return 0.0,'key_term_mismatch'
-    seq=SequenceMatcher(None,' '.join(wanted),' '.join(found)).ratio()
-    score=.75*coverage+.25*seq
+    score=.75*coverage+.25*SequenceMatcher(None,' '.join(wanted),' '.join(found)).ratio()
     return (score,'ok') if coverage>=.80 and score>=.78 else (0.0,'low_similarity')
 
 class Manager:
@@ -227,14 +221,14 @@ class Manager:
                 if not isinstance(item,dict):continue
                 link=item.get('product_link') or item.get('link')
                 if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):link=''
-                title=str(item.get('title',''))[:300]
-                score,reason=offer_similarity(p,title)
+                title=str(item.get('title',''))[:300];score,reason=offer_similarity(p,title)
                 if reason!='ok':continue
-                # Shopping product_link is commonly a Google product/search page, not a retailer URL.
                 direct=link if link and urlsplit(link).hostname and 'google.' not in urlsplit(link).hostname.lower() else ''
-                offers.append({'title':title,'seller':str(item.get('source',''))[:200],
-                    'price_text':str(item.get('price',''))[:100],'url':direct,'ean_verified':False,
-                    'similarity':round(score,3),'needs_retailer_url':not bool(direct)})
+                candidate_id=str(item.get('product_id') or item.get('immersive_product_page_token') or uuid.uuid4().hex)
+                offers.append({'id':candidate_id,'title':title,'seller':str(item.get('source',''))[:200],
+                    'price_text':str(item.get('price',''))[:100],'url':direct,'ean_verified':False,'similarity':round(score,3),
+                    'needs_retailer_url':not bool(direct),'product_id':str(item.get('product_id') or ''),
+                    'page_token':str(item.get('immersive_product_page_token') or ''),'stores':[]})
             offers.sort(key=lambda o:o.get('similarity',0),reverse=True)
             async with self.lock:
                 p=self.product(pid);p['offers']=offers;p['discovered_at']=now().isoformat()
@@ -245,6 +239,47 @@ class Manager:
             self.log('ERROR','discovery_failed',message,pid)
             async with self.lock:await self.save()
             return {'status':'failed','error':message}
+    async def resolve_offer(self,pid,candidate_id):
+        async with self.lock:
+            product=self.product(pid);settings=copy.deepcopy(self.data['settings'])
+            offer=next((o for o in product.get('offers',[]) if o.get('id')==candidate_id),None)
+            if not offer:raise PriceError('Discovery candidate not found; run discovery again')
+            if offer.get('stores'):return {'status':'cached','count':len(offer['stores'])}
+            if not settings.get('api_key'):raise PriceError('No SerpApi key configured')
+            identifier=('page_token',offer.get('page_token')) if offer.get('page_token') else ('product_id',offer.get('product_id'))
+            if not identifier[1]:raise PriceError('Candidate has no Product API identifier')
+            start,end=cycle(now(),settings['reset_day']);account=hashlib.sha256(settings['api_key'].encode()).hexdigest();budget=self.data['budget'].setdefault(account,{})
+            if budget.get('cycle')!=start.isoformat():budget.update(cycle=start.isoformat(),used=0,products={})
+            total=max(0,settings['monthly_budget']-settings['reserve']);group=budget.setdefault('products',{}).setdefault(pid,{'used':0})
+            if budget['used']>=total:raise PriceError('SerpApi account budget exhausted')
+            budget['used']+=1;group['used']=group.get('used',0)+1;await self.save()
+        self.log('INFO','offer_resolution_start','Resolving direct stores with one reserved Product API request',pid)
+        params={'engine':'google_product',identifier[0]:identifier[1],'offer_view':'true','api_key':settings['api_key'],'gl':settings['country'],'hl':settings['language']}
+        try:data=await self.net.shopping(params)
+        except Exception as err:
+            message=str(err) if isinstance(err,PriceError) else f'Offer resolution failed ({type(err).__name__})';self.log('ERROR','offer_resolution_failed',message,pid);raise PriceError(message) from None
+        results=data.get('product_results',{})
+        if not isinstance(results,dict):raise PriceError('Invalid Google Product response')
+        if offer_similarity(product,str(results.get('title','')))[1]!='ok':raise PriceError('Resolved product does not match tracked product')
+        stores=[]
+        for store in results.get('stores',[]) if isinstance(results.get('stores',[]),list) else []:
+            if not isinstance(store,dict):continue
+            link=store.get('link');title=str(store.get('title') or results.get('title') or '')[:300]
+            if not isinstance(link,str) or urlsplit(link).scheme not in ('http','https'):continue
+            host=(urlsplit(link).hostname or '').lower()
+            if host=='google.com' or host.endswith('.google.com') or host=='serpapi.com' or host.endswith('.serpapi.com'):continue
+            score,reason=offer_similarity(product,title);condition=str(store.get('condition','')).casefold()
+            if reason!='ok' or condition in ('refurbished','used','pre-owned'):continue
+            stores.append({'name':str(store.get('name',''))[:200],'title':title,'url':link,'price_text':str(store.get('price',''))[:100],'price':store.get('extracted_price'),'similarity':round(score,3)})
+        unique={}
+        for store in stores:unique.setdefault(store['url'],store)
+        stores=sorted(unique.values(),key=lambda x:x['similarity'],reverse=True)[:40]
+        async with self.lock:
+            current=next((o for o in self.product(pid).get('offers',[]) if o.get('id')==candidate_id),None)
+            if current is not None:current['stores']=stores;current['resolved_at']=now().isoformat()
+            self.log('INFO','offer_resolution_done',f'{len(stores)} direct stores resolved',pid);await self.save()
+        return {'status':'ok','count':len(stores)}
+
     async def poll(self,force=False):
         if self.poll_lock.locked():return
         async with self.poll_lock:

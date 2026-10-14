@@ -1,6 +1,6 @@
 # Price Monitor for Home Assistant
 
-Version **0.3.2**. A complete custom integration repository for HACS custom-repository
+Version **0.2.0**. A complete custom integration repository for HACS custom-repository
 installation. Target baseline: Home Assistant **2026.7 or newer** (local brand images
 and coordinator retry-delay API). This baseline is a declared target, not a tested
 minimum. No live Home Assistant installation was available for validation.
