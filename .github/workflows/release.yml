@@ -12,20 +12,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: pip install -r requirements-dev.txt
       - run: python tools/check_release.py
       - run: python -m unittest discover -s tests -v
+      - run: node --check custom_components/price_monitor/frontend/panel.js
+      - run: node tests/frontend_smoke.cjs
       - name: Verify tag and package
         run: |
           python - <<'PYCODE'
           import json, os, pathlib, zipfile
-          root = pathlib.Path('custom_components/price_monitor')
-          version = json.loads((root/'manifest.json').read_text())['version']
-          assert os.environ['GITHUB_REF_NAME'] == 'v'+version
+          root=pathlib.Path('custom_components/price_monitor')
+          version=json.loads((root/'manifest.json').read_text())['version']
+          assert os.environ['GITHUB_REF_NAME']=='v'+version
           with zipfile.ZipFile('price_monitor.zip','w',zipfile.ZIP_DEFLATED) as z:
               for p in root.rglob('*'):
-                  if p.is_file() and '__pycache__' not in p.parts:
-                      z.write(p,p.relative_to(root))
+                  if p.is_file() and '__pycache__' not in p.parts:z.write(p,p.relative_to(root))
           PYCODE
       - uses: softprops/action-gh-release@v2
         with:

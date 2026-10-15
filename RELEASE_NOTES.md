@@ -1,8 +1,8 @@
-# PriceGauge 0.3.4
+# PriceGauge 0.3.5
 
-- Adds visible color-swatch legends to historical price charts.
-- Fixes resolved-store checkboxes by rendering stores as independent rows rather than nested labels.
-- Product API resolution now validates the resolved product once, then accepts direct store offers belonging to that exact product even when store titles are abbreviated.
-- Logs Product API response ID/status, raw store count, acceptance count and rejection reasons.
-- Empty Product API results remain retryable; non-empty resolved stores are cached.
-- The GUI explicitly notes that SerpApi may serve identical cached searches without charging the monthly search count.
+- Refreshed visual design with a cleaner app shell, navigation, product cards, responsive layout, polished forms and seller cards.
+- Historical charts keep color-matched legends with clearer range/date context.
+- Detects known Client Challenge HTML before it can enter the price picker.
+- When a retailer returns a Client Challenge to the browser-shaped server request, PriceGauge retries once with a simpler compatibility request profile. It does not execute or solve challenge JavaScript.
+- If both profiles receive the challenge, PriceGauge reports an explicit retailer challenge error.
+- Existing direct-store resolver diagnostics and selectable store rows remain intact.

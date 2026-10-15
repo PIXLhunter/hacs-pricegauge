@@ -1,1 +1,1 @@
-PriceGauge 0.3.4 offline tests include Product API direct-store resolution/caching/retry and frontend legend smoke coverage. Live HA/retailer/SerpApi validation remains required.
+PriceGauge 0.3.5 offline tests include Client Challenge signature detection plus existing resolver, chart legend, CRUD, parser and budget tests. Live retailer/HACS validation remains required.

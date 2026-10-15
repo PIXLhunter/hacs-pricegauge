@@ -63,6 +63,11 @@ class ParserTests(unittest.TestCase):
     def test_cycle(self):
         start,end=manager.cycle(datetime(2026,2,28,tzinfo=timezone.utc),31)
         self.assertEqual(start.day,28);self.assertEqual(end.day,31)
+
+    def test_client_challenge_detection(self):
+        page='<html><title>Client Challenge</title>A required part of this site couldn’t load.</html>'
+        self.assertTrue(network.Network._is_client_challenge(page))
+        self.assertFalse(network.Network._is_client_challenge('<html><title>Product</title>Price 329</html>'))
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DB.clear()

@@ -1,12 +1,20 @@
-# PriceGauge 0.3.4
+# PriceGauge 0.3.5
 
-Home Assistant GUI-first product price tracking. Products are collapsible; retailer rows show current prices, while product summaries expose current-retailer average, minimum and maximum. Expanded products include per-retailer history plots with colored legends.
+A GUI-first Home Assistant price tracker with collapsible product cards, product-level current average/minimum/maximum, retailer current prices, historical charts, seller discovery and direct-store resolution.
 
-Seller discovery uses strict Shopping-title matching. Google Shopping candidates can be resolved on demand through SerpApi's Google Product API. One locally budgeted request is reserved before an uncached lookup. Direct retailer offers are read from the exact resolved product's store list and can then be selected independently in the GUI. Successful non-empty results are cached. Empty results are retryable.
+## Retailer compatibility
 
-The PriceGauge panel is available to authenticated Home Assistant users, including non-admin users. Keep `price_monitor: {}` at the top level of `configuration.yaml`; no manual PriceGauge `panel_custom` entry is needed.
+Normal requests use a persistent cookie session with browser-compatible headers. If a retailer returns recognizable `Client Challenge` HTML with HTTP 200, PriceGauge retries that page once with a simpler compatibility request profile similar to earlier releases. Challenge HTML is never offered in the click-to-select price preview. PriceGauge does not execute, solve or bypass retailer challenge scripts. If both normal profiles are rejected, the retailer is reported as unavailable.
 
-For verbose backend logs:
+## GUI
+
+The panel uses Home Assistant theme colors and now has a compact navigation header, responsive product summary cards, clearer actions, polished forms, seller rows, strict-match discovery cards and color-matched chart legends. The panel remains accessible to authenticated non-admin Home Assistant users.
+
+Keep `price_monitor: {}` at the top level of `configuration.yaml`. No manual PriceGauge `panel_custom` entry is needed.
+
+## Diagnostics
+
+Enable verbose backend logging with:
 
 ```yaml
 logger:
@@ -14,4 +22,4 @@ logger:
     custom_components.price_monitor: debug
 ```
 
-Tests are mocked/synthetic. Validate on your Home Assistant instance before relying on a new release.
+Tests are mocked/synthetic; validate the release on your Home Assistant instance and target retailers.
