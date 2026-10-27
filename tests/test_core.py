@@ -194,4 +194,4 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['count'],1);self.assertEqual(product['offers'][0]['stores'][0]['url'],'https://shop.example/widget')
         self.assertTrue(any(log['event']=='offer_resolution_title_variation' for log in self.m.logs))
     async def test_log_visibility(self):
-        self.m.log('ERROR','test','visible');self.assertEqual(self.m.view()['logs'][-1]['message'],'visible')
+        self.m.log('ERROR','test','visible');entry=self.m.view()['logs'][-1];self.assertEqual(entry['message'],'visible');self.assertEqual(entry['version'],'0.3.9');self.assertEqual(self.m.view()['settings']['version'],'0.3.9')

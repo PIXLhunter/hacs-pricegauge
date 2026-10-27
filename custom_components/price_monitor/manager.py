@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import urlsplit
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from .const import DOMAIN,SIGNAL
+from .const import DOMAIN,SIGNAL,VERSION
 from .network import Network,valid_url
 from .parser import parse,metadata,preview,extract,PriceError
 
@@ -80,10 +80,10 @@ class Manager:
         self.data=None;self.lock=asyncio.Lock();self.logs=deque(maxlen=500)
         self.snapshots={};self.net=Network();self.poll_lock=asyncio.Lock()
     def log(self,level,event,message,product_id=None,seller_id=None):
-        item={'at':now().isoformat(),'level':level,'event':event,'message':message,
+        item={'at':now().isoformat(),'level':level,'event':event,'message':message,'version':VERSION,
               'product_id':product_id,'seller_id':seller_id}
         self.logs.append(item)
-        getattr(_LOGGER,level.lower())('%s: %s [product=%s seller=%s]',event,message,product_id,seller_id)
+        getattr(_LOGGER,level.lower())('[v%s] %s: %s [product=%s seller=%s]',VERSION,event,message,product_id,seller_id)
     async def start(self):
         self.data=await self.store.async_load() or {'products':[],'settings':{'api_key':'','monthly_budget':250,'reserve':25,'checks_per_month':4,'reset_day':1,'interval':60,'country':'nl','language':'en'},'budget':{},'imported':[]}
         settings=self.data.setdefault('settings',{})
@@ -119,6 +119,7 @@ class Manager:
         current=self.data['budget'].get(key,{})
         d['settings']['budget_used']=current.get('used',0)
         d['settings']['budget_cycle']=current.get('cycle')
+        d['settings']['version']=VERSION
         d['settings']['notify_entities']=self.notification_entities()
         d['logs']=list(self.logs)
         for p in d['products']:

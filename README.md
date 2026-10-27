@@ -1,4 +1,4 @@
-# PriceGauge 0.3.8
+# PriceGauge 0.3.9
 
 GUI-first Home Assistant price tracking with retailer discovery, normalized pricing, historical charts, market reports and Home Assistant notifications.
 
@@ -24,3 +24,8 @@ Keep `price_monitor: {}` at the top level of Home Assistant `configuration.yaml`
 ## 0.3.8 direct-store fix
 
 Strict identity filtering is applied before a Shopping candidate is offered in the GUI. Direct-store resolution then follows that candidate product_id/page_token. The Product API title is retained as a diagnostic warning but is no longer a second hard identity gate because Google can normalize model punctuation/naming. Successful zero-store Product API responses are cached for one hour to avoid repeated local-budget consumption on repeated clicks.
+
+
+## Version diagnostics
+
+The currently running PriceGauge version is shown in the top-right of the GUI. New GUI/backend log entries carry the same version so screenshots and downloaded logs identify which code produced an event.

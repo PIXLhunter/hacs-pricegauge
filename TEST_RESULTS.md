@@ -1,1 +1,1 @@
-PriceGauge 0.3.8 adds regression coverage for resolved-title identifier formatting differences and one-hour caching of zero-store Product API responses. Tests remain mocked/synthetic; live Home Assistant and SerpApi validation is required.
+PriceGauge 0.3.9 adds version diagnostics. Backend tests verify structured logs and GUI state expose version 0.3.9; frontend smoke coverage verifies the top-right version note. Existing mocked/synthetic tests remain; live HA validation is required.
