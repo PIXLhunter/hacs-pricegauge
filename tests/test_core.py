@@ -167,7 +167,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first['count'],0);self.assertEqual(second['count'],0);self.assertEqual(second['status'],'cached');self.assertEqual(self.m.net.serpapi.await_count,1)
     async def test_notification_destination_and_test_message(self):
         self.assertTrue(any(x['entity_id']=='notify.phone' for x in self.m.view()['settings']['notify_entities']))
-        await self.m.settings({'notify_entity':'notify.phone'})
+        await self.m.settings({'notify_entity':'notify.phone','notify_shortlist':['notify.phone']})
         result=await self.m.test_notification();self.assertTrue(result['sent'])
         self.hass.services.async_call.assert_awaited_once_with('notify','send_message',{'title':'PriceGauge','message':'Test notification from PriceGauge'},target={'entity_id':'notify.phone'},blocking=True)
     async def test_product_target_dedup_state(self):
@@ -176,7 +176,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         await self.m.product_settings(pid,{'target_price':90});self.assertFalse(p['target_notified'])
     async def test_legacy_mobile_app_action_is_available(self):
         destinations=self.m.notification_entities();self.assertTrue(any(x['entity_id']=='notify.mobile_app_phone' for x in destinations))
-        await self.m.settings({'notify_entity':'notify.mobile_app_phone'});self.hass.services.async_call.reset_mock()
+        await self.m.settings({'notify_entity':'notify.mobile_app_phone','notify_shortlist':['notify.mobile_app_phone']});self.hass.services.async_call.reset_mock()
         self.assertTrue((await self.m.test_notification())['sent'])
         self.hass.services.async_call.assert_awaited_once_with('notify','mobile_app_phone',{'title':'PriceGauge','message':'Test notification from PriceGauge'},blocking=True)
     async def test_report_initial_and_major_minimum_change(self):
@@ -193,5 +193,17 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         result=await self.m.resolve_offer(pid,'candidate')
         self.assertEqual(result['count'],1);self.assertEqual(product['offers'][0]['stores'][0]['url'],'https://shop.example/widget')
         self.assertTrue(any(log['event']=='offer_resolution_title_variation' for log in self.m.logs))
+    async def test_notification_shortlist_and_product_target(self):
+        pid,_,_=await self.add()
+        await self.m.settings({'notify_shortlist':['notify.phone','notify.mobile_app_phone']})
+        await self.m.product_settings(pid,{'notify_target':'notify.mobile_app_phone','notify_enabled':True})
+        self.assertEqual(self.m.product(pid)['notify_target'],'notify.mobile_app_phone')
+        with self.assertRaises(parser.PriceError):await self.m.product_settings(pid,{'notify_target':'notify.not_shortlisted'})
+    async def test_removing_shortlist_target_clears_product_assignment(self):
+        pid,_,_=await self.add();await self.m.settings({'notify_shortlist':['notify.phone']});await self.m.product_settings(pid,{'notify_target':'notify.phone'})
+        await self.m.settings({'notify_shortlist':[]});self.assertEqual(self.m.product(pid)['notify_target'],'')
+    async def test_explicit_empty_product_target_does_not_fall_back(self):
+        await self.m.settings({'notify_entity':'notify.phone','notify_shortlist':['notify.phone']});self.hass.services.async_call.reset_mock()
+        self.assertFalse(await self.m.notify('x','y',target='',use_default=False));self.hass.services.async_call.assert_not_awaited()
     async def test_log_visibility(self):
-        self.m.log('ERROR','test','visible');entry=self.m.view()['logs'][-1];self.assertEqual(entry['message'],'visible');self.assertEqual(entry['version'],'0.3.9');self.assertEqual(self.m.view()['settings']['version'],'0.3.9')
+        self.m.log('ERROR','test','visible');entry=self.m.view()['logs'][-1];self.assertEqual(entry['message'],'visible');self.assertEqual(entry['version'],'0.4.0');self.assertEqual(self.m.view()['settings']['version'],'0.4.0')

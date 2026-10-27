@@ -27,7 +27,7 @@ async def command(hass,connection,msg):
             result={'product_id':pid,'discovery':await manager.discover(pid,force=True) if not p.get('product_id') else {'status':'cached_not_due'}}
         elif action=='remove':await manager.remove(p['product_id'],p.get('seller_id'));result={'removed':True}
         elif action=='settings':
-            allowed={'api_key','monthly_budget','reserve','checks_per_month','reset_day','interval','country','language','notify_entity','notify_price_drop','notify_drop_percent','report_major_percent','report_interval_days'}
+            allowed={'api_key','monthly_budget','reserve','checks_per_month','reset_day','interval','country','language','notify_entity','notify_shortlist','notify_price_drop','notify_drop_percent','report_major_percent','report_interval_days'}
             if set(p)-allowed:raise PriceError('Unknown setting')
             await manager.settings(p);result={'saved':True}
         elif action=='discover':result=await manager.discover(p['product_id'],force=True)

@@ -87,11 +87,12 @@ class Manager:
     async def start(self):
         self.data=await self.store.async_load() or {'products':[],'settings':{'api_key':'','monthly_budget':250,'reserve':25,'checks_per_month':4,'reset_day':1,'interval':60,'country':'nl','language':'en'},'budget':{},'imported':[]}
         settings=self.data.setdefault('settings',{})
-        settings.setdefault('notify_entity','');settings.setdefault('notify_price_drop',False);settings.setdefault('notify_drop_percent',5.0)
+        settings.setdefault('notify_entity','');settings.setdefault('notify_shortlist',[]);settings.setdefault('notify_price_drop',False);settings.setdefault('notify_drop_percent',5.0)
+        if settings.get('notify_entity') and settings['notify_entity'] not in settings['notify_shortlist']:settings['notify_shortlist'].append(settings['notify_entity'])
         settings.setdefault('report_major_percent',10.0);settings.setdefault('report_interval_days',3)
         self.data.setdefault('reports',[])
         for product in self.data.setdefault('products',[]):
-            product.setdefault('notify_enabled',True);product.setdefault('target_price',None);product.setdefault('target_notified',False)
+            product.setdefault('notify_enabled',True);product.setdefault('notify_target','');product.setdefault('target_price',None);product.setdefault('target_notified',False)
             product.setdefault('comparison_unit','each')
             for seller in product.get('sellers',[]):seller.setdefault('pack_count',1);seller.setdefault('unit_ml',None)
         self.logs.extend(self.data.get('logs',[]))
@@ -120,7 +121,9 @@ class Manager:
         d['settings']['budget_used']=current.get('used',0)
         d['settings']['budget_cycle']=current.get('cycle')
         d['settings']['version']=VERSION
-        d['settings']['notify_entities']=self.notification_entities()
+        available=self.notification_entities();available_ids={item['entity_id'] for item in available}
+        d['settings']['notify_entities']=available
+        d['settings']['notify_shortlist']=[target for target in self.data['settings'].get('notify_shortlist',[]) if target in available_ids]
         d['logs']=list(self.logs)
         for p in d['products']:
             p['summary']=summary(p)
@@ -145,8 +148,8 @@ class Manager:
         if self.hass.states.get(target) is not None:return True
         return target.split('.',1)[1] in self.hass.services.async_services().get('notify',{})
 
-    async def notify(self,title,message,product_id=None):
-        target=self.data['settings'].get('notify_entity','')
+    async def notify(self,title,message,product_id=None,target=None,use_default=True):
+        if target is None and use_default:target=self.data['settings'].get('notify_entity','')
         if not target:return False
         if not self._notification_target_available(target):
             self.log('WARNING','notification_skipped','Configured notification destination is unavailable',product_id);return False
@@ -167,6 +170,11 @@ class Manager:
         async with self.lock:
             product=self.product(pid)
             if 'notify_enabled' in values:product['notify_enabled']=bool(values['notify_enabled'])
+            if 'notify_target' in values:
+                target=str(values['notify_target'] or '')
+                shortlist=self.data['settings'].get('notify_shortlist',[])
+                if target and target not in shortlist:raise PriceError('Notification target is not in the configured shortlist')
+                product['notify_target']=target
             if 'comparison_unit' in values:
                 if values['comparison_unit'] not in ('each','100ml'):raise PriceError('Invalid comparison unit')
                 product['comparison_unit']=values['comparison_unit']
@@ -271,6 +279,11 @@ class Manager:
             for key in ('api_key','country','language','notify_entity'):
                 if not isinstance(updated[key],str):raise PriceError(f'Invalid {key}')
             if len(updated['country'])!=2 or not updated['country'].isalpha():raise PriceError('Use a two-letter country code')
+            shortlist=updated.get('notify_shortlist',self.data['settings'].get('notify_shortlist',[]))
+            if not isinstance(shortlist,list):raise PriceError('Invalid notification shortlist')
+            shortlist=list(dict.fromkeys(str(target) for target in shortlist if target))
+            if any(not self._notification_target_available(target) for target in shortlist):raise PriceError('One or more notification destinations are unavailable')
+            updated['notify_shortlist']=shortlist
             updated['notify_price_drop']=bool(updated.get('notify_price_drop',False))
             updated['notify_drop_percent']=float(updated.get('notify_drop_percent',5.0))
             if not 0<=updated['notify_drop_percent']<=100:raise PriceError('Invalid drop percentage')
@@ -278,8 +291,10 @@ class Manager:
             updated['report_interval_days']=int(updated.get('report_interval_days',3))
             if not 0<updated['report_major_percent']<=100:raise PriceError('Invalid report change percentage')
             if not 1<=updated['report_interval_days']<=30:raise PriceError('Invalid report interval')
-            if updated['notify_entity'] and not self._notification_target_available(updated['notify_entity']):raise PriceError('Selected notification destination is unavailable')
+            if updated['notify_entity'] and (updated['notify_entity'] not in shortlist or not self._notification_target_available(updated['notify_entity'])):raise PriceError('Test notification destination must be in the shortlist')
             self.data['settings']=updated
+            for product in self.data['products']:
+                if product.get('notify_target') and product['notify_target'] not in shortlist:product['notify_target']=''
             self.log('INFO','settings_saved','GUI settings updated (secrets omitted)');await self.save()
     async def discover(self,pid,force=False):
         async with self.lock:
@@ -421,8 +436,12 @@ class Manager:
                 if age>=timedelta(days=int(self.data['settings'].get('report_interval_days',3))):reason='scheduled'
         elif self.data['products']:reason='initial'
         if reason:
-            reports.append(self._report_snapshot(reason));del reports[:-50]
+            report=self._report_snapshot(reason);reports.append(report);del reports[:-50]
             self.log('INFO','report_updated',f'Product report updated: {reason}');await self.save()
+            for item in report['products']:
+                product=self.product(item['id']);target=product.get('notify_target')
+                if product.get('notify_enabled',True) and target:
+                    await self.notify('PriceGauge report',f'{item["name"]}: min {item["minimum"]:.2f} / avg {item["average"]:.2f} / max {item["maximum"]:.2f} {item["currency"]}{item["unit"]} across {item["retailers"]} shops',item['id'],target=target,use_default=False)
             return True
         return False
 
@@ -451,9 +470,9 @@ class Manager:
                                 self.hass.bus.async_fire('price_monitor_price_drop',{'product_id':pid,'seller_id':sid,'name':p['name'],'price':result['price'],'previous_price':previous,'currency':p['currency'],'url':current['url']})
                             should_drop=bool(previous and previous>0 and result['price']<previous and (previous-result['price'])/previous*100>=self.data['settings'].get('notify_drop_percent',5.0))
                             if p.get('notify_enabled',True) and self.data['settings'].get('notify_price_drop') and should_drop:
-                                await self.notify('Price drop',f'{p["name"]}: {previous:.2f} → {result["price"]:.2f} {p["currency"]} at {current["store"]}',pid)
+                                await self.notify('Price drop',f'{p["name"]}: {previous:.2f} → {result["price"]:.2f} {p["currency"]} at {current["store"]}',pid,target=p.get('notify_target'),use_default=False)
                             if p.get('notify_enabled',True) and target_crossed:
-                                await self.notify('Target price reached',f'{p["name"]}: {comparison_price:.2f} {p["currency"]}{summary(p)["unit"]} at {current["store"]} (target {target:.2f})',pid)
+                                await self.notify('Target price reached',f'{p["name"]}: {comparison_price:.2f} {p["currency"]}{summary(p)["unit"]} at {current["store"]} (target {target:.2f})',pid,target=p.get('notify_target'),use_default=False)
                     except Exception as err:
                         message=str(err) if isinstance(err,PriceError) else f'Price check failed ({type(err).__name__})'
                         self.log('ERROR','price_failed',message,pid,sid)

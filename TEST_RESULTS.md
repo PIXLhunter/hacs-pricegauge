@@ -1,1 +1,1 @@
-PriceGauge 0.3.9 adds version diagnostics. Backend tests verify structured logs and GUI state expose version 0.3.9; frontend smoke coverage verifies the top-right version note. Existing mocked/synthetic tests remain; live HA validation is required.
+PriceGauge 0.4.0 adds mocked coverage for notification shortlist validation, per-product notification assignment, safe removal of shortlist members and no-fallback semantics for products with no recipient. Frontend smoke coverage verifies the per-product shortlist selector. Live HA phone delivery still requires validation.

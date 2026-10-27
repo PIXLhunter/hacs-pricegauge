@@ -1,4 +1,4 @@
-# PriceGauge 0.3.9
+# PriceGauge 0.4.0
 
 GUI-first Home Assistant price tracking with retailer discovery, normalized pricing, historical charts, market reports and Home Assistant notifications.
 
@@ -29,3 +29,8 @@ Strict identity filtering is applied before a Shopping candidate is offered in t
 ## Version diagnostics
 
 The currently running PriceGauge version is shown in the top-right of the GUI. New GUI/backend log entries carry the same version so screenshots and downloaded logs identify which code produced an event.
+
+
+## Notification shortlist
+
+Settings discovers available Home Assistant notification destinations. Select the destinations that belong in the PriceGauge shortlist, for example your phone and a second household phone. Each product card then selects one destination from only that shortlist, or `No notifications`. Product price drops, target alerts and product reports go only to the product-selected destination. Removing a destination from the shortlist clears any product assignment to it.
