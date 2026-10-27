@@ -1,1 +1,1 @@
-PriceGauge 0.3.5 offline tests include Client Challenge signature detection plus existing resolver, chart legend, CRUD, parser and budget tests. Live retailer/HACS validation remains required.
+PriceGauge 0.3.7: 43 Python tests plus frontend DOM, legend and notification settings smoke tests. New coverage includes per-item pack normalization, per-100-ml normalization, exclusion of missing-size sellers, initial report generation and major-minimum-change report generation. Live Home Assistant, phone, retailer and HACS validation remain required.

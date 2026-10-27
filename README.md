@@ -1,25 +1,21 @@
-# PriceGauge 0.3.5
+# PriceGauge 0.3.7
 
-A GUI-first Home Assistant price tracker with collapsible product cards, product-level current average/minimum/maximum, retailer current prices, historical charts, seller discovery and direct-store resolution.
+GUI-first Home Assistant price tracking with retailer discovery, normalized pricing, historical charts, market reports and Home Assistant notifications.
+
+## Packs and sizes
+
+Each retailer can specify **Units in this webshop pack** and **Millilitres per unit**. A product comparison mode chooses either **Price per item** or **Price per 100 ml**. Raw retailer pack prices remain visible, while product Min/Avg/Max and the graph are normalized. Example: a pack of 3 tubes costing EUR 12 becomes EUR 4/item. If each tube is 50 ml and the product is set to `/100 ml`, that same pack becomes EUR 8/100 ml. A retailer without an ml value is excluded from `/100 ml` aggregates until its ml value is configured.
+
+## Reports
+
+The new Reports tab stores market snapshots. Defaults are **every 3 days** and **also whenever a normalized product minimum changes by at least 10%** versus the latest report. Both values are configurable in Settings. Reports show Min/Avg/Max, shop count and the minimum percentage change from the prior report. Up to 50 snapshots are retained in PriceGauge storage.
+
+## Notifications
+
+Settings lists modern `notify.*` entities and legacy `notify.mobile_app_*` Home Assistant actions. Configure global percentage-drop notifications or a normalized target price inside an individual product.
 
 ## Retailer compatibility
 
-Normal requests use a persistent cookie session with browser-compatible headers. If a retailer returns recognizable `Client Challenge` HTML with HTTP 200, PriceGauge retries that page once with a simpler compatibility request profile similar to earlier releases. Challenge HTML is never offered in the click-to-select price preview. PriceGauge does not execute, solve or bypass retailer challenge scripts. If both normal profiles are rejected, the retailer is reported as unavailable.
+PriceGauge uses a persistent browser-compatible request profile, with one fresh-session simpler compatibility retry when recognizable Client Challenge HTML is returned. Challenge scripts and CAPTCHAs are not executed or bypassed.
 
-## GUI
-
-The panel uses Home Assistant theme colors and now has a compact navigation header, responsive product summary cards, clearer actions, polished forms, seller rows, strict-match discovery cards and color-matched chart legends. The panel remains accessible to authenticated non-admin Home Assistant users.
-
-Keep `price_monitor: {}` at the top level of `configuration.yaml`. No manual PriceGauge `panel_custom` entry is needed.
-
-## Diagnostics
-
-Enable verbose backend logging with:
-
-```yaml
-logger:
-  logs:
-    custom_components.price_monitor: debug
-```
-
-Tests are mocked/synthetic; validate the release on your Home Assistant instance and target retailers.
+Keep `price_monitor: {}` at the top level of Home Assistant `configuration.yaml`. Tests are mocked/synthetic; validate on the actual Home Assistant instance before relying on a release.

@@ -59,7 +59,7 @@ class ParserTests(unittest.TestCase):
         s={}
         for price in (10,20,15):manager.record(s,price,'now')
         summary=manager.summary({'sellers':[s]})
-        self.assertEqual(summary,{'retailers':1,'average':15.0,'minimum':15.0,'maximum':15.0})
+        self.assertEqual(summary,{'retailers':1,'average':15.0,'minimum':15.0,'maximum':15.0,'unit':'/item'})
     def test_cycle(self):
         start,end=manager.cycle(datetime(2026,2,28,tzinfo=timezone.utc),31)
         self.assertEqual(start.day,28);self.assertEqual(end.day,31)
@@ -68,11 +68,26 @@ class ParserTests(unittest.TestCase):
         page='<html><title>Client Challenge</title>A required part of this site couldn’t load.</html>'
         self.assertTrue(network.Network._is_client_challenge(page))
         self.assertFalse(network.Network._is_client_challenge('<html><title>Product</title>Price 329</html>'))
+    def test_pack_normalization_per_item(self):
+        product={'comparison_unit':'each','sellers':[{'price':12,'status':'ok','pack_count':3}]}
+        self.assertEqual(manager.normalized_price(product,product['sellers'][0]),4)
+        self.assertEqual(manager.summary(product)['minimum'],4)
+    def test_volume_normalization_per_100ml(self):
+        product={'comparison_unit':'100ml','sellers':[{'price':12,'status':'ok','pack_count':3,'unit_ml':50}]}
+        self.assertEqual(manager.normalized_price(product,product['sellers'][0]),8)
+        self.assertEqual(manager.summary(product)['unit'],'/100 ml')
+    def test_volume_without_ml_is_not_comparable(self):
+        product={'comparison_unit':'100ml','sellers':[{'price':12,'status':'ok','pack_count':3,'unit_ml':None}]}
+        self.assertIsNone(manager.normalized_price(product,product['sellers'][0]))
+        self.assertEqual(manager.summary(product)['retailers'],0)
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DB.clear()
         async def executor(fn,*args):return fn(*args)
-        self.hass=types.SimpleNamespace(async_add_executor_job=executor,bus=types.SimpleNamespace(async_fire=Mock()))
+        self.notify_state=types.SimpleNamespace(entity_id='notify.phone',attributes={'friendly_name':'Phone'})
+        self.hass=types.SimpleNamespace(async_add_executor_job=executor,bus=types.SimpleNamespace(async_fire=Mock()),
+            states=types.SimpleNamespace(async_all=lambda domain:[self.notify_state] if domain=='notify' else [],get=lambda entity:self.notify_state if entity=='notify.phone' else None),
+            services=types.SimpleNamespace(async_call=AsyncMock(),async_services=lambda:{'notify':{'send_message':{},'mobile_app_phone':{}}}))
         self.m=manager.Manager(self.hass)
         self.m.net.start=AsyncMock();self.m.net.html=AsyncMock(return_value=HTML)
         self.m.net.serpapi=AsyncMock();self.m.net.shopping=AsyncMock(return_value={'shopping_results':[{'source':'Shop','title':'P','price':'EUR 12','product_link':'https://example.com/p'}]})
@@ -150,5 +165,25 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.m.net.serpapi.return_value={'search_metadata':{'id':'zero','status':'Success'},'product_results':{'title':'P','stores':[]}}
         first=await self.m.resolve_offer(pid,'candidate');second=await self.m.resolve_offer(pid,'candidate')
         self.assertEqual(first['count'],0);self.assertEqual(second['count'],0);self.assertEqual(self.m.net.serpapi.await_count,2)
+    async def test_notification_destination_and_test_message(self):
+        self.assertTrue(any(x['entity_id']=='notify.phone' for x in self.m.view()['settings']['notify_entities']))
+        await self.m.settings({'notify_entity':'notify.phone'})
+        result=await self.m.test_notification();self.assertTrue(result['sent'])
+        self.hass.services.async_call.assert_awaited_once_with('notify','send_message',{'title':'PriceGauge','message':'Test notification from PriceGauge'},target={'entity_id':'notify.phone'},blocking=True)
+    async def test_product_target_dedup_state(self):
+        pid,_,_=await self.add();await self.m.product_settings(pid,{'target_price':100,'notify_enabled':True})
+        p=self.m.product(pid);self.assertEqual(p['target_price'],100.0);self.assertFalse(p['target_notified'])
+        await self.m.product_settings(pid,{'target_price':90});self.assertFalse(p['target_notified'])
+    async def test_legacy_mobile_app_action_is_available(self):
+        destinations=self.m.notification_entities();self.assertTrue(any(x['entity_id']=='notify.mobile_app_phone' for x in destinations))
+        await self.m.settings({'notify_entity':'notify.mobile_app_phone'});self.hass.services.async_call.reset_mock()
+        self.assertTrue((await self.m.test_notification())['sent'])
+        self.hass.services.async_call.assert_awaited_once_with('notify','mobile_app_phone',{'title':'PriceGauge','message':'Test notification from PriceGauge'},blocking=True)
+    async def test_report_initial_and_major_minimum_change(self):
+        pid,_,_=await self.add();p=self.m.product(pid);p['comparison_unit']='each';p['sellers'][0]['pack_count']=1
+        self.assertTrue(await self.m.update_report_if_due());self.assertEqual(self.m.data['reports'][-1]['reason'],'initial')
+        p['sellers'][0]['price']=100;self.m.data['reports'][-1]['products'][0]['minimum']=129.99
+        self.m.data['settings']['report_major_percent']=10
+        self.assertTrue(await self.m.update_report_if_due());self.assertIn('major minimum change',self.m.data['reports'][-1]['reason'])
     async def test_log_visibility(self):
         self.m.log('ERROR','test','visible');self.assertEqual(self.m.view()['logs'][-1]['message'],'visible')

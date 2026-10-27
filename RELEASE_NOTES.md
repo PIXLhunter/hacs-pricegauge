@@ -1,8 +1,8 @@
-# PriceGauge 0.3.5
+# PriceGauge 0.3.7
 
-- Refreshed visual design with a cleaner app shell, navigation, product cards, responsive layout, polished forms and seller cards.
-- Historical charts keep color-matched legends with clearer range/date context.
-- Detects known Client Challenge HTML before it can enter the price picker.
-- When a retailer returns a Client Challenge to the browser-shaped server request, PriceGauge retries once with a simpler compatibility request profile. It does not execute or solve challenge JavaScript.
-- If both profiles receive the challenge, PriceGauge reports an explicit retailer challenge error.
-- Existing direct-store resolver diagnostics and selectable store rows remain intact.
+- Adds durable market reports in a Reports tab. A report is refreshed after the configurable interval (default 3 days), or sooner when a product minimum moves by the configurable major-change threshold (default 10%).
+- Reports preserve product min/average/max, shop count, store snapshots and minimum percentage change versus the previous report; the last 50 reports are retained.
+- Adds package normalization: webshop pack count plus optional millilitres per item. Products can compare in `/item` or `/100 ml`.
+- A 3-pack priced at EUR 12 compares as EUR 4/item. A 3 x 50 ml pack priced at EUR 12 compares as EUR 8/100 ml.
+- Product cards, reports, target-price alerts and graph values use normalized comparison prices. Retailer rows continue to show the raw pack price as well.
+- Keeps 0.3.6 phone notifications and the HORNBACH Client Challenge compatibility retry.

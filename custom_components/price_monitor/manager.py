@@ -34,9 +34,23 @@ def record(s,price,at):
     history=s.setdefault('history',[]);history.append({'at':at,'price':price})
     del history[:-1000]
 
+def normalized_price(product,seller):
+    if seller.get('status')!='ok' or not isinstance(seller.get('price'),(int,float)):return None
+    count=float(seller.get('pack_count') or 1)
+    if count<=0:return None
+    raw=float(seller['price'])
+    mode=product.get('comparison_unit','each')
+    if mode=='100ml':
+        ml=float(seller.get('unit_ml') or 0)
+        if ml<=0:return None
+        return raw/(count*ml)*100
+    return raw/count
+
 def summary(product):
-    prices=[float(x['price']) for x in product.get('sellers',[]) if x.get('status')=='ok' and isinstance(x.get('price'),(int,float))]
-    return {'retailers':len(prices),'average':sum(prices)/len(prices) if prices else None,'minimum':min(prices) if prices else None,'maximum':max(prices) if prices else None}
+    prices=[value for seller in product.get('sellers',[]) if (value:=normalized_price(product,seller)) is not None]
+    return {'retailers':len(prices),'average':sum(prices)/len(prices) if prices else None,
+            'minimum':min(prices) if prices else None,'maximum':max(prices) if prices else None,
+            'unit':'/100 ml' if product.get('comparison_unit')=='100ml' else '/item'}
 BAD_WORDS={'case','cover','cable','adapter','charger','stand','mount','holder','strap','protector','replacement','earpad','earpads','sleeve','dock','bag','pouch','battery','remote','filter','refurbished','renewed','used','bundle','bundel','pack','set','kit','industrial','hoes','hoesje','kabel','lader','houder','standaard','bandje','beschermer','vervanging','oorkussen','oorkussens','tas','etui','accu','afstandsbediening'}
 STOP={'the','and','with','for','van','met','een','de','het','voor','new','nieuw','wireless','draadloos'}
 def toks(text):return re.findall(r'[a-z0-9]+',str(text).casefold())
@@ -72,6 +86,14 @@ class Manager:
         getattr(_LOGGER,level.lower())('%s: %s [product=%s seller=%s]',event,message,product_id,seller_id)
     async def start(self):
         self.data=await self.store.async_load() or {'products':[],'settings':{'api_key':'','monthly_budget':250,'reserve':25,'checks_per_month':4,'reset_day':1,'interval':60,'country':'nl','language':'en'},'budget':{},'imported':[]}
+        settings=self.data.setdefault('settings',{})
+        settings.setdefault('notify_entity','');settings.setdefault('notify_price_drop',False);settings.setdefault('notify_drop_percent',5.0)
+        settings.setdefault('report_major_percent',10.0);settings.setdefault('report_interval_days',3)
+        self.data.setdefault('reports',[])
+        for product in self.data.setdefault('products',[]):
+            product.setdefault('notify_enabled',True);product.setdefault('target_price',None);product.setdefault('target_notified',False)
+            product.setdefault('comparison_unit','each')
+            for seller in product.get('sellers',[]):seller.setdefault('pack_count',1);seller.setdefault('unit_ml',None)
         self.logs.extend(self.data.get('logs',[]))
         old_budget=await Store(self.hass,1,'price_monitor.discovery_budget').async_load() or {}
         if not self.data.get('budget_imported'):
@@ -97,12 +119,67 @@ class Manager:
         current=self.data['budget'].get(key,{})
         d['settings']['budget_used']=current.get('used',0)
         d['settings']['budget_cycle']=current.get('cycle')
+        d['settings']['notify_entities']=self.notification_entities()
         d['logs']=list(self.logs)
         for p in d['products']:
             p['summary']=summary(p)
-            for s in p['sellers']:
-                s['history']=s.get('history',[])[-200:]
+            for seller in p['sellers']:
+                seller['history']=seller.get('history',[])[-200:]
+                seller['normalized_price']=normalized_price(p,seller)
         return d
+    def notification_entities(self):
+        items={}
+        for state in self.hass.states.async_all('notify'):
+            items[state.entity_id]={'entity_id':state.entity_id,'name':f"{state.attributes.get('friendly_name') or state.entity_id} (entity)"}
+        # Companion apps can still expose legacy notify.mobile_app_* actions instead of notify entities.
+        services=self.hass.services.async_services().get('notify',{})
+        for service in services:
+            full=f'notify.{service}'
+            if service not in ('send_message','notify','persistent_notification') and full not in items:
+                items[full]={'entity_id':full,'name':f'{full} (action)'}
+        return sorted(items.values(),key=lambda item:item['name'].casefold())
+
+    def _notification_target_available(self,target):
+        if not target.startswith('notify.'):return False
+        if self.hass.states.get(target) is not None:return True
+        return target.split('.',1)[1] in self.hass.services.async_services().get('notify',{})
+
+    async def notify(self,title,message,product_id=None):
+        target=self.data['settings'].get('notify_entity','')
+        if not target:return False
+        if not self._notification_target_available(target):
+            self.log('WARNING','notification_skipped','Configured notification destination is unavailable',product_id);return False
+        try:
+            if self.hass.states.get(target) is not None:
+                await self.hass.services.async_call('notify','send_message',{'title':title,'message':message},target={'entity_id':target},blocking=True)
+            else:
+                await self.hass.services.async_call('notify',target.split('.',1)[1],{'title':title,'message':message},blocking=True)
+            self.log('INFO','notification_sent',title,product_id);return True
+        except Exception as err:
+            self.log('ERROR','notification_failed',f'Notification failed ({type(err).__name__})',product_id);return False
+
+    async def test_notification(self):
+        if not self.data['settings'].get('notify_entity'):raise PriceError('Select a notification destination first')
+        return {'sent':await self.notify('PriceGauge','Test notification from PriceGauge')}
+
+    async def product_settings(self,pid,values):
+        async with self.lock:
+            product=self.product(pid)
+            if 'notify_enabled' in values:product['notify_enabled']=bool(values['notify_enabled'])
+            if 'comparison_unit' in values:
+                if values['comparison_unit'] not in ('each','100ml'):raise PriceError('Invalid comparison unit')
+                product['comparison_unit']=values['comparison_unit']
+            if 'target_price' in values:
+                target=values['target_price']
+                if target in ('',None):product['target_price']=None;product['target_notified']=False
+                else:
+                    target=float(target)
+                    if target<0 or target>10000000:raise PriceError('Invalid target price')
+                    if product.get('target_price')!=target:product['target_notified']=False
+                    product['target_price']=target
+            await self.save()
+        return {'saved':True}
+
     async def inspect(self,url,currency='EUR',ean=''):
         valid_url(url);self.log('INFO','inspect_start','Fetching public retailer page')
         try:
@@ -159,7 +236,7 @@ class Manager:
             else:
                 name=payload.get('name','').strip() or snap['metadata']['name']
                 if not name:raise PriceError('Enter a product name')
-                p={'id':uuid.uuid4().hex,'name':name[:200],'ean':payload.get('ean','').strip() or snap['metadata']['ean'],'currency':snap['currency'],'sellers':[],'offers':[]}
+                p={'id':uuid.uuid4().hex,'name':name[:200],'ean':payload.get('ean','').strip() or snap['metadata']['ean'],'currency':snap['currency'],'comparison_unit':payload.get('comparison_unit','each') if payload.get('comparison_unit','each') in ('each','100ml') else 'each','sellers':[],'offers':[]}
                 self.data['products'].append(p)
             replace_id=payload.get('replace_id','')
             existing=next((s for s in p['sellers'] if s['id']==replace_id),None) if replace_id else None
@@ -167,9 +244,12 @@ class Manager:
             if any(s['url']==snap['url'] and s['id']!=replace_id for s in p['sellers']):raise PriceError('This seller URL is already tracked')
             if existing and existing['url']!=snap['url']:raise PriceError('Editing a selector cannot change the seller URL; add a new website')
             seller={'id':uuid.uuid4().hex,'url':snap['url'],'store':urlsplit(snap['url']).hostname,
-                    'selector':result['selector'],'attribute':result['attribute'],'separator':result['separator'],'currency':p['currency'],'ean':p['ean'],'status':'ok'}
+                    'selector':result['selector'],'attribute':result['attribute'],'separator':result['separator'],'currency':p['currency'],'ean':p['ean'],'status':'ok',
+                    'pack_count':max(1,int(payload.get('pack_count') or 1)),'unit_ml':float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None}
             if existing:
-                existing.update(selector=result['selector'],attribute=result['attribute'],separator=result['separator'])
+                existing.update(selector=result['selector'],attribute=result['attribute'],separator=result['separator'],
+                    pack_count=max(1,int(payload.get('pack_count') or existing.get('pack_count') or 1)),
+                    unit_ml=float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None)
                 seller=existing
             else:p['sellers'].append(seller)
             record(seller,result['price'],now().isoformat())
@@ -187,9 +267,17 @@ class Manager:
             for key,low,high in [('monthly_budget',0,100000),('reserve',0,100000),('checks_per_month',0,10000),('reset_day',1,31),('interval',15,10080)]:
                 if not isinstance(updated[key],int) or not low<=updated[key]<=high:raise PriceError(f'Invalid {key}')
             if updated['reserve']>updated['monthly_budget']:raise PriceError('Reserve exceeds budget')
-            for key in ('api_key','country','language'):
+            for key in ('api_key','country','language','notify_entity'):
                 if not isinstance(updated[key],str):raise PriceError(f'Invalid {key}')
             if len(updated['country'])!=2 or not updated['country'].isalpha():raise PriceError('Use a two-letter country code')
+            updated['notify_price_drop']=bool(updated.get('notify_price_drop',False))
+            updated['notify_drop_percent']=float(updated.get('notify_drop_percent',5.0))
+            if not 0<=updated['notify_drop_percent']<=100:raise PriceError('Invalid drop percentage')
+            updated['report_major_percent']=float(updated.get('report_major_percent',10.0))
+            updated['report_interval_days']=int(updated.get('report_interval_days',3))
+            if not 0<updated['report_major_percent']<=100:raise PriceError('Invalid report change percentage')
+            if not 1<=updated['report_interval_days']<=30:raise PriceError('Invalid report interval')
+            if updated['notify_entity'] and not self._notification_target_available(updated['notify_entity']):raise PriceError('Selected notification destination is unavailable')
             self.data['settings']=updated
             self.log('INFO','settings_saved','GUI settings updated (secrets omitted)');await self.save()
     async def discover(self,pid,force=False):
@@ -300,6 +388,37 @@ class Manager:
         # Empty store sets are intentionally not treated as cached by the early check, allowing a retry.
         return {'status':'ok','count':len(stores),'raw_count':len(raw_stores),'search_id':search_id,'search_status':search_status}
 
+    def _report_snapshot(self,reason):
+        products=[];previous={p['id']:p for p in (self.data.get('reports',[])[-1].get('products',[]) if self.data.get('reports') else [])}
+        for product in self.data['products']:
+            sm=summary(product);old_min=previous.get(product['id'],{}).get('minimum')
+            delta=((sm['minimum']-old_min)/old_min*100) if sm['minimum'] is not None and old_min not in (None,0) else None
+            products.append({'id':product['id'],'name':product['name'],'currency':product['currency'],'unit':sm['unit'],
+                'average':sm['average'],'minimum':sm['minimum'],'maximum':sm['maximum'],'minimum_change_percent':delta,'retailers':sm['retailers'],
+                'stores':[{'name':seller['store'],'price':seller.get('price'),'normalized_price':normalized_price(product,seller),
+                    'pack_count':seller.get('pack_count',1),'unit_ml':seller.get('unit_ml')} for seller in product.get('sellers',[])]})
+        return {'id':uuid.uuid4().hex,'generated_at':now().isoformat(),'reason':reason,'products':products}
+
+    async def update_report_if_due(self):
+        reports=self.data.setdefault('reports',[]);latest=reports[-1] if reports else None
+        reason=None
+        if latest:
+            previous={p['id']:p for p in latest.get('products',[])}
+            threshold=float(self.data['settings'].get('report_major_percent',10.0))
+            for product in self.data['products']:
+                current=summary(product).get('minimum');old=previous.get(product['id'],{}).get('minimum')
+                if current is not None and old not in (None,0) and abs(current-old)/old*100>=threshold:
+                    reason=f'major minimum change ({product["name"]})';break
+            if reason is None:
+                age=now()-datetime.fromisoformat(latest['generated_at'])
+                if age>=timedelta(days=int(self.data['settings'].get('report_interval_days',3))):reason='scheduled'
+        elif self.data['products']:reason='initial'
+        if reason:
+            reports.append(self._report_snapshot(reason));del reports[:-50]
+            self.log('INFO','report_updated',f'Product report updated: {reason}');await self.save()
+            return True
+        return False
+
     async def poll(self,force=False):
         if self.poll_lock.locked():return
         async with self.poll_lock:
@@ -316,9 +435,18 @@ class Manager:
                             p=self.product(pid);current=next((s for s in p['sellers'] if s['id']==sid),None)
                             if current is None:continue
                             previous=current.get('price');record(current,result['price'],now().isoformat())
+                            target=p.get('target_price');comparison_price=normalized_price(p,current)
+                            target_crossed=bool(target is not None and comparison_price is not None and comparison_price<=target and not p.get('target_notified',False))
+                            if target is not None and comparison_price is not None and comparison_price>target:p['target_notified']=False
+                            if target_crossed:p['target_notified']=True
                             self.log('INFO','price_checked',f'{result["price"]} {p["currency"]}',pid,sid);await self.save()
                             if previous is not None and result['price']<previous:
                                 self.hass.bus.async_fire('price_monitor_price_drop',{'product_id':pid,'seller_id':sid,'name':p['name'],'price':result['price'],'previous_price':previous,'currency':p['currency'],'url':current['url']})
+                            should_drop=bool(previous and previous>0 and result['price']<previous and (previous-result['price'])/previous*100>=self.data['settings'].get('notify_drop_percent',5.0))
+                            if p.get('notify_enabled',True) and self.data['settings'].get('notify_price_drop') and should_drop:
+                                await self.notify('Price drop',f'{p["name"]}: {previous:.2f} → {result["price"]:.2f} {p["currency"]} at {current["store"]}',pid)
+                            if p.get('notify_enabled',True) and target_crossed:
+                                await self.notify('Target price reached',f'{p["name"]}: {comparison_price:.2f} {p["currency"]}{summary(p)["unit"]} at {current["store"]} (target {target:.2f})',pid)
                     except Exception as err:
                         message=str(err) if isinstance(err,PriceError) else f'Price check failed ({type(err).__name__})'
                         self.log('ERROR','price_failed',message,pid,sid)
@@ -329,13 +457,14 @@ class Manager:
                             if current:current.update(status='error',error=message,checked_at=now().isoformat())
                             await self.save()
                 if product['id'] in [p['id'] for p in self.data['products']]:await self.discover(product['id'])
+            await self.update_report_if_due()
     async def import_entry(self,entry):
         if entry.entry_id in self.data['imported']:return
         s={**entry.data,**entry.options}
         if s.get('mode')=='monitor':
-            p={'id':uuid.uuid4().hex,'name':entry.title,'ean':s.get('ean',''),'currency':s.get('currency','EUR'),'offers':[],'sellers':[]}
+            p={'id':uuid.uuid4().hex,'name':entry.title,'ean':s.get('ean',''),'currency':s.get('currency','EUR'),'comparison_unit':'each','offers':[],'sellers':[]}
             seller={'id':uuid.uuid4().hex,'url':s['url'],'store':urlsplit(s['url']).hostname,'selector':s.get('selector',''),
-                    'attribute':s.get('attribute',''),'separator':s.get('decimal_separator','auto'),'currency':p['currency'],'ean':p['ean'],'status':'pending'}
+                    'attribute':s.get('attribute',''),'separator':s.get('decimal_separator','auto'),'currency':p['currency'],'ean':p['ean'],'status':'pending','pack_count':1,'unit_ml':None}
             old=await Store(self.hass,1,f'price_monitor.{entry.entry_id}').async_load() or {}
             if isinstance(old.get('price'),(int,float)):
                 seller['price']=old['price'];seller['legacy_minimum']=old.get('lowest')
