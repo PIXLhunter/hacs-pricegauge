@@ -333,10 +333,14 @@ class Manager:
             product=self.product(pid);settings=copy.deepcopy(self.data['settings'])
             offer=next((o for o in product.get('offers',[]) if o.get('id')==candidate_id),None)
             if not offer:raise PriceError('Discovery candidate not found; run discovery again')
-            # Non-empty resolved stores are durable and free to reopen.
-            if offer.get('stores'):
-                self.log('INFO','offer_resolution_cache',f"Using {len(offer['stores'])} cached direct stores",pid)
-                return {'status':'cached','count':len(offer['stores'])}
+            # Reuse any successful Product API response for one hour, including zero-store responses.
+            resolved_at=offer.get('resolved_at')
+            if resolved_at:
+                try:fresh=(now()-datetime.fromisoformat(resolved_at))<timedelta(hours=1)
+                except (ValueError,TypeError):fresh=False
+                if fresh:
+                    self.log('INFO','offer_resolution_cache',f"Using cached Product API result with {len(offer.get('stores',[]))} direct stores",pid)
+                    return {'status':'cached','count':len(offer.get('stores',[])),'diagnostics':offer.get('resolve_diagnostics',{})}
             if not settings.get('api_key'):raise PriceError('No SerpApi key configured')
             identifier=('page_token',offer.get('page_token')) if offer.get('page_token') else ('product_id',offer.get('product_id'))
             if not identifier[1]:raise PriceError('Candidate has no Product API identifier')
@@ -358,8 +362,11 @@ class Manager:
         product_score,product_reason=offer_similarity(product,resolved_title)
         raw_stores=results.get('stores',[]) if isinstance(results.get('stores',[]),list) else []
         search_id=str(metadata.get('id',''))[:80];search_status=str(metadata.get('status',''))[:40]
-        self.log('INFO','offer_resolution_response',f'Product API response id={search_id or "unknown"} status={search_status or "unknown"}; product_match={product_reason}; raw_stores={len(raw_stores)}',pid)
-        if product_reason!='ok':raise PriceError(f'Resolved Google product does not match tracked product ({product_reason})')
+        # The strict identity gate already ran on the Shopping candidate which supplied this product_id/page_token.
+        # SerpApi documents those values as identifiers of the Google product / exact offer. Resolved Product API
+        # titles can normalize or omit model punctuation, so a second hard title gate produced false mismatches.
+        self.log('INFO','offer_resolution_response',f'Product API response id={search_id or "unknown"} status={search_status or "unknown"}; resolved_title_check={product_reason}; raw_stores={len(raw_stores)}',pid)
+        if product_reason!='ok':self.log('WARNING','offer_resolution_title_variation',f'Resolved title differs from tracked naming ({product_reason}); trusting identifier from already-validated Shopping candidate',pid)
         stores=[];reject={'invalid_link':0,'google_link':0,'condition':0}
         for store in raw_stores:
             if not isinstance(store,dict):continue
@@ -385,7 +392,6 @@ class Manager:
             if current is not None:
                 current['stores']=stores;current['resolved_at']=now().isoformat();current['resolve_diagnostics']={'search_id':search_id,'status':search_status,'raw_stores':len(raw_stores),'accepted':len(stores),'rejected':reject}
             self.log('INFO','offer_resolution_done',f'{len(stores)}/{len(raw_stores)} direct stores accepted; rejected invalid={reject["invalid_link"]}, google={reject["google_link"]}, condition={reject["condition"]}',pid);await self.save()
-        # Empty store sets are intentionally not treated as cached by the early check, allowing a retry.
         return {'status':'ok','count':len(stores),'raw_count':len(raw_stores),'search_id':search_id,'search_status':search_status}
 
     def _report_snapshot(self,reason):

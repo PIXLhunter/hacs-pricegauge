@@ -1,8 +1,6 @@
-# PriceGauge 0.3.7
+# PriceGauge 0.3.8
 
-- Adds durable market reports in a Reports tab. A report is refreshed after the configurable interval (default 3 days), or sooner when a product minimum moves by the configurable major-change threshold (default 10%).
-- Reports preserve product min/average/max, shop count, store snapshots and minimum percentage change versus the previous report; the last 50 reports are retained.
-- Adds package normalization: webshop pack count plus optional millilitres per item. Products can compare in `/item` or `/100 ml`.
-- A 3-pack priced at EUR 12 compares as EUR 4/item. A 3 x 50 ml pack priced at EUR 12 compares as EUR 8/100 ml.
-- Product cards, reports, target-price alerts and graph values use normalized comparison prices. Retailer rows continue to show the raw pack price as well.
-- Keeps 0.3.6 phone notifications and the HORNBACH Client Challenge compatibility retry.
+- Fixes false `identifier_mismatch` errors in direct-store resolution.
+- Strict product matching remains on the original Google Shopping candidate. Once that candidate provides a `product_id` or `page_token`, the Google Product API response is tied to that identifier and a differently formatted resolved title is diagnostic rather than a second hard rejection.
+- Successful Product API results, including zero-store results, are cached locally for one hour so repeated clicks do not repeatedly consume PriceGauge's local request allowance for the same SerpApi query.
+- Resolver logs retain the resolved-title check as a warning for diagnostics.

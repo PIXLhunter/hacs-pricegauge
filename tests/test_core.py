@@ -159,12 +159,12 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['count'],1);self.assertEqual(product['offers'][0]['stores'][0]['url'],'https://shop.example/p')
         again=await self.m.resolve_offer(pid,'candidate');self.assertEqual(again['status'],'cached');self.m.net.serpapi.assert_awaited_once()
 
-    async def test_product_api_zero_store_can_retry(self):
+    async def test_product_api_zero_store_is_cached_for_one_hour(self):
         pid,_,_=await self.add();await self.m.settings({'api_key':'secret'})
         self.m.product(pid)['offers']=[{'id':'candidate','title':'P','product_id':'123','page_token':'','stores':[]}]
         self.m.net.serpapi.return_value={'search_metadata':{'id':'zero','status':'Success'},'product_results':{'title':'P','stores':[]}}
         first=await self.m.resolve_offer(pid,'candidate');second=await self.m.resolve_offer(pid,'candidate')
-        self.assertEqual(first['count'],0);self.assertEqual(second['count'],0);self.assertEqual(self.m.net.serpapi.await_count,2)
+        self.assertEqual(first['count'],0);self.assertEqual(second['count'],0);self.assertEqual(second['status'],'cached');self.assertEqual(self.m.net.serpapi.await_count,1)
     async def test_notification_destination_and_test_message(self):
         self.assertTrue(any(x['entity_id']=='notify.phone' for x in self.m.view()['settings']['notify_entities']))
         await self.m.settings({'notify_entity':'notify.phone'})
@@ -185,5 +185,13 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         p['sellers'][0]['price']=100;self.m.data['reports'][-1]['products'][0]['minimum']=129.99
         self.m.data['settings']['report_major_percent']=10
         self.assertTrue(await self.m.update_report_if_due());self.assertIn('major minimum change',self.m.data['reports'][-1]['reason'])
+    async def test_resolved_title_identifier_mismatch_is_warning_not_failure(self):
+        pid,_,_=await self.add();await self.m.settings({'api_key':'secret'})
+        product=self.m.product(pid);product['name']='Widget ABC-123 Ultra'
+        product['offers']=[{'id':'candidate','title':'Widget ABC-123 Ultra','product_id':'123','page_token':'','stores':[]}]
+        self.m.net.serpapi.return_value={'search_metadata':{'id':'formatting','status':'Success'},'product_results':{'title':'Widget Ultra','stores':[{'name':'Shop','link':'https://shop.example/widget','title':'Widget','price':'EUR 10','extracted_price':10}]}}
+        result=await self.m.resolve_offer(pid,'candidate')
+        self.assertEqual(result['count'],1);self.assertEqual(product['offers'][0]['stores'][0]['url'],'https://shop.example/widget')
+        self.assertTrue(any(log['event']=='offer_resolution_title_variation' for log in self.m.logs))
     async def test_log_visibility(self):
         self.m.log('ERROR','test','visible');self.assertEqual(self.m.view()['logs'][-1]['message'],'visible')
