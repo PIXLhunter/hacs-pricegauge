@@ -80,6 +80,15 @@ class ParserTests(unittest.TestCase):
         product={'comparison_unit':'100ml','sellers':[{'price':12,'status':'ok','pack_count':3,'unit_ml':None}]}
         self.assertIsNone(manager.normalized_price(product,product['sellers'][0]))
         self.assertEqual(manager.summary(product)['retailers'],0)
+    def test_shipping_is_included_in_per_item_comparison(self):
+        product={'comparison_unit':'each','sellers':[{'price':12,'status':'ok','pack_count':3,'shipping_cost':3,'free_shipping_from':20}]}
+        self.assertEqual(manager.normalized_price(product,product['sellers'][0]),5)
+    def test_free_shipping_threshold_uses_pack_price(self):
+        product={'comparison_unit':'each','sellers':[{'price':25,'status':'ok','pack_count':5,'shipping_cost':4.95,'free_shipping_from':20}]}
+        self.assertEqual(manager.normalized_price(product,product['sellers'][0]),5)
+    def test_shipping_is_included_in_per_100ml(self):
+        product={'comparison_unit':'100ml','sellers':[{'price':12,'status':'ok','pack_count':3,'unit_ml':50,'shipping_cost':3}]}
+        self.assertEqual(manager.normalized_price(product,product['sellers'][0]),10)
 class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DB.clear()
@@ -178,7 +187,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         destinations=self.m.notification_entities();self.assertTrue(any(x['entity_id']=='notify.mobile_app_phone' for x in destinations))
         await self.m.settings({'notify_entity':'notify.mobile_app_phone','notify_shortlist':['notify.mobile_app_phone']});self.hass.services.async_call.reset_mock()
         self.assertTrue((await self.m.test_notification())['sent'])
-        self.hass.services.async_call.assert_awaited_once_with('notify','mobile_app_phone',{'title':'PriceGauge','message':'Test notification from PriceGauge'},blocking=True)
+        self.hass.services.async_call.assert_awaited_once_with('notify','mobile_app_phone',{'title':'PriceGauge','message':'Test notification from PriceGauge','data':{'clickAction':'/pricegauge','url':'/pricegauge','actions':[{'action':'URI','title':'Open PriceGauge','uri':'/pricegauge'}]}},blocking=True)
     async def test_report_initial_and_major_minimum_change(self):
         pid,_,_=await self.add();p=self.m.product(pid);p['comparison_unit']='each';p['sellers'][0]['pack_count']=1
         self.assertTrue(await self.m.update_report_if_due());self.assertEqual(self.m.data['reports'][-1]['reason'],'initial')
@@ -205,5 +214,18 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_empty_product_target_does_not_fall_back(self):
         await self.m.settings({'notify_entity':'notify.phone','notify_shortlist':['notify.phone']});self.hass.services.async_call.reset_mock()
         self.assertFalse(await self.m.notify('x','y',target='',use_default=False));self.hass.services.async_call.assert_not_awaited()
+    async def test_shipping_defaults_are_remembered_per_retailer(self):
+        pid,snap,node=await self.add();seller=self.m.product(pid)['sellers'][0]
+        # Reconfigure existing seller and store defaults for the host.
+        await self.m.add({'token':snap['token'],'node':node,'product_id':pid,'replace_id':seller['id'],'shipping_cost':4.95,'free_shipping_from':50})
+        defaults=self.m.retailer_defaults('https://example.com/another')
+        self.assertEqual(defaults['shipping_cost'],4.95);self.assertEqual(defaults['free_shipping_from'],50)
+    async def test_mobile_notification_has_tracker_tap_and_retailer_action(self):
+        pid,_,_=await self.add();await self.m.settings({'notify_shortlist':['notify.mobile_app_phone']});await self.m.product_settings(pid,{'notify_target':'notify.mobile_app_phone'})
+        self.hass.services.async_call.reset_mock();self.assertTrue(await self.m.notify('Price drop','Dropped',pid,target='notify.mobile_app_phone',use_default=False))
+        payload=self.hass.services.async_call.await_args.args[2]
+        self.assertEqual(payload['data']['clickAction'],'/pricegauge')
+        self.assertEqual(payload['data']['actions'][0],{'action':'URI','title':'Go to retailer site','uri':'https://example.com/product'})
+        self.assertEqual(payload['data']['actions'][1],{'action':'URI','title':'Open PriceGauge','uri':'/pricegauge'})
     async def test_log_visibility(self):
-        self.m.log('ERROR','test','visible');entry=self.m.view()['logs'][-1];self.assertEqual(entry['message'],'visible');self.assertEqual(entry['version'],'0.4.0');self.assertEqual(self.m.view()['settings']['version'],'0.4.0')
+        self.m.log('ERROR','test','visible');entry=self.m.view()['logs'][-1];self.assertEqual(entry['message'],'visible');self.assertEqual(entry['version'],'0.4.1');self.assertEqual(self.m.view()['settings']['version'],'0.4.1')

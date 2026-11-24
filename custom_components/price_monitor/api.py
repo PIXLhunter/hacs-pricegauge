@@ -15,6 +15,7 @@ async def command(hass,connection,msg):
     action=msg['action'];p=msg['payload']
     try:
         if action=='state':result=manager.view()
+        elif action=='retailer_defaults':result=manager.retailer_defaults(p['url'])
         elif action=='inspect':
             currency=p.get('currency','EUR')
             if currency not in ('EUR','USD','GBP','CHF','CAD','AUD','JPY','SEK','NOK','DKK','PLN'):raise PriceError('Unsupported currency')
@@ -38,7 +39,7 @@ async def command(hass,connection,msg):
         elif action=='client_error':
             # Client diagnostics contain fixed stage/type only; no URLs, page text or secrets.
             stage=p.get('stage','frontend')
-            if stage not in ('inspect','select','add','remove','settings','product_settings','test_notification','discover','resolve_offer','check','frontend'):stage='frontend'
+            if stage not in ('retailer_defaults','inspect','select','add','remove','settings','product_settings','test_notification','discover','resolve_offer','check','frontend'):stage='frontend'
             manager.log('ERROR','frontend_error',f'Frontend operation failed: {stage}')
             result={'logged':True}
         else:raise PriceError('Unknown GUI action')

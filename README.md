@@ -1,4 +1,4 @@
-# PriceGauge 0.4.0
+# PriceGauge 0.4.1
 
 GUI-first Home Assistant price tracking with retailer discovery, normalized pricing, historical charts, market reports and Home Assistant notifications.
 
@@ -34,3 +34,12 @@ The currently running PriceGauge version is shown in the top-right of the GUI. N
 ## Notification shortlist
 
 Settings discovers available Home Assistant notification destinations. Select the destinations that belong in the PriceGauge shortlist, for example your phone and a second household phone. Each product card then selects one destination from only that shortlist, or `No notifications`. Product price drops, target alerts and product reports go only to the product-selected destination. Removing a destination from the shortlist clears any product assignment to it.
+
+
+## Shipping
+
+Shipping is configured per webshop offer. Enter a fixed shipping cost and optionally a free-shipping order threshold. PriceGauge remembers those defaults by retailer hostname. Effective shipping is zero when the current pack price reaches that threshold; otherwise shipping is included before `/item` or `/100 ml` normalization.
+
+## Android notification navigation
+
+For `notify.mobile_app_*` targets, tapping the notification opens `/pricegauge` in Home Assistant. The notification also contains a `Go to retailer site` URI action pointing to the currently cheapest valid retailer for the product, plus an `Open PriceGauge` action.

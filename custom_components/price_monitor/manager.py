@@ -18,6 +18,9 @@ from .parser import parse,metadata,preview,extract,PriceError
 
 _LOGGER=logging.getLogger(__name__)
 def now():return datetime.now(timezone.utc)
+def retailer_key(url):
+    host=(urlsplit(url).hostname or '').casefold().rstrip('.')
+    return host[4:] if host.startswith('www.') else host
 def cycle(at,day):
     def date(y,m):return datetime(y,m,min(day,calendar.monthrange(y,m)[1]),tzinfo=timezone.utc)
     start=date(at.year,at.month)
@@ -39,6 +42,10 @@ def normalized_price(product,seller):
     count=float(seller.get('pack_count') or 1)
     if count<=0:return None
     raw=float(seller['price'])
+    shipping=float(seller.get('shipping_cost') or 0)
+    free_from=seller.get('free_shipping_from')
+    if free_from not in (None,'') and raw>=float(free_from):shipping=0.0
+    raw+=shipping
     mode=product.get('comparison_unit','each')
     if mode=='100ml':
         ml=float(seller.get('unit_ml') or 0)
@@ -91,10 +98,11 @@ class Manager:
         if settings.get('notify_entity') and settings['notify_entity'] not in settings['notify_shortlist']:settings['notify_shortlist'].append(settings['notify_entity'])
         settings.setdefault('report_major_percent',10.0);settings.setdefault('report_interval_days',3)
         self.data.setdefault('reports',[])
+        self.data.setdefault('retailer_defaults',{})
         for product in self.data.setdefault('products',[]):
             product.setdefault('notify_enabled',True);product.setdefault('notify_target','');product.setdefault('target_price',None);product.setdefault('target_notified',False)
             product.setdefault('comparison_unit','each')
-            for seller in product.get('sellers',[]):seller.setdefault('pack_count',1);seller.setdefault('unit_ml',None)
+            for seller in product.get('sellers',[]):seller.setdefault('pack_count',1);seller.setdefault('unit_ml',None);seller.setdefault('shipping_cost',0.0);seller.setdefault('free_shipping_from',None)
         self.logs.extend(self.data.get('logs',[]))
         old_budget=await Store(self.hass,1,'price_monitor.discovery_budget').async_load() or {}
         if not self.data.get('budget_imported'):
@@ -130,6 +138,9 @@ class Manager:
             for seller in p['sellers']:
                 seller['history']=seller.get('history',[])[-200:]
                 seller['normalized_price']=normalized_price(p,seller)
+                shipping=float(seller.get('shipping_cost') or 0);free_from=seller.get('free_shipping_from')
+                seller['effective_shipping']=0.0 if free_from not in (None,'') and isinstance(seller.get('price'),(int,float)) and seller['price']>=float(free_from) else shipping
+                seller['effective_total']=(seller.get('price')+seller['effective_shipping']) if isinstance(seller.get('price'),(int,float)) else None
         return d
     def notification_entities(self):
         items={}
@@ -157,7 +168,18 @@ class Manager:
             if self.hass.states.get(target) is not None:
                 await self.hass.services.async_call('notify','send_message',{'title':title,'message':message},target={'entity_id':target},blocking=True)
             else:
-                await self.hass.services.async_call('notify',target.split('.',1)[1],{'title':title,'message':message},blocking=True)
+                payload={'title':title,'message':message}
+                if target.startswith('notify.mobile_app_'):
+                    product=self.product(product_id) if product_id else None
+                    retailer_url=''
+                    if product:
+                        valid=[seller for seller in product.get('sellers',[]) if seller.get('status')=='ok' and seller.get('url') and normalized_price(product,seller) is not None]
+                        if valid:retailer_url=min(valid,key=lambda seller:normalized_price(product,seller)).get('url','')
+                    actions=[]
+                    if retailer_url:actions.append({'action':'URI','title':'Go to retailer site','uri':retailer_url})
+                    actions.append({'action':'URI','title':'Open PriceGauge','uri':'/pricegauge'})
+                    payload['data']={'clickAction':'/pricegauge','url':'/pricegauge','actions':actions}
+                await self.hass.services.async_call('notify',target.split('.',1)[1],payload,blocking=True)
             self.log('INFO','notification_sent',title,product_id);return True
         except Exception as err:
             self.log('ERROR','notification_failed',f'Notification failed ({type(err).__name__})',product_id);return False
@@ -188,6 +210,12 @@ class Manager:
                     product['target_price']=target
             await self.save()
         return {'saved':True}
+
+    def retailer_defaults(self,url):
+        valid_url(url);host=retailer_key(url)
+        defaults=self.data.setdefault('retailer_defaults',{}).get(host,{})
+        return {'host':host,'shipping_cost':float(defaults.get('shipping_cost') or 0),
+                'free_shipping_from':defaults.get('free_shipping_from')}
 
     async def inspect(self,url,currency='EUR',ean=''):
         valid_url(url);self.log('INFO','inspect_start','Fetching public retailer page')
@@ -252,13 +280,20 @@ class Manager:
             if replace_id and not existing:raise PriceError('Seller to edit not found')
             if any(s['url']==snap['url'] and s['id']!=replace_id for s in p['sellers']):raise PriceError('This seller URL is already tracked')
             if existing and existing['url']!=snap['url']:raise PriceError('Editing a selector cannot change the seller URL; add a new website')
-            seller={'id':uuid.uuid4().hex,'url':snap['url'],'store':urlsplit(snap['url']).hostname,
+            host=urlsplit(snap['url']).hostname;default_key=retailer_key(snap['url'])
+            shipping_cost=float(payload.get('shipping_cost') or 0)
+            free_shipping_from=float(payload['free_shipping_from']) if payload.get('free_shipping_from') not in ('',None) else None
+            if shipping_cost<0 or (free_shipping_from is not None and free_shipping_from<0):raise PriceError('Invalid shipping configuration')
+            self.data.setdefault('retailer_defaults',{})[default_key]={'shipping_cost':shipping_cost,'free_shipping_from':free_shipping_from}
+            seller={'id':uuid.uuid4().hex,'url':snap['url'],'store':host,
                     'selector':result['selector'],'attribute':result['attribute'],'separator':result['separator'],'currency':p['currency'],'ean':p['ean'],'status':'ok',
-                    'pack_count':max(1,int(payload.get('pack_count') or 1)),'unit_ml':float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None}
+                    'pack_count':max(1,int(payload.get('pack_count') or 1)),'unit_ml':float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None,
+                    'shipping_cost':shipping_cost,'free_shipping_from':free_shipping_from}
             if existing:
                 existing.update(selector=result['selector'],attribute=result['attribute'],separator=result['separator'],
                     pack_count=max(1,int(payload.get('pack_count') or existing.get('pack_count') or 1)),
-                    unit_ml=float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None)
+                    unit_ml=float(payload['unit_ml']) if payload.get('unit_ml') not in ('',None) else None,
+                    shipping_cost=shipping_cost,free_shipping_from=free_shipping_from)
                 seller=existing
             else:p['sellers'].append(seller)
             record(seller,result['price'],now().isoformat())
@@ -418,7 +453,7 @@ class Manager:
             products.append({'id':product['id'],'name':product['name'],'currency':product['currency'],'unit':sm['unit'],
                 'average':sm['average'],'minimum':sm['minimum'],'maximum':sm['maximum'],'minimum_change_percent':delta,'retailers':sm['retailers'],
                 'stores':[{'name':seller['store'],'price':seller.get('price'),'normalized_price':normalized_price(product,seller),
-                    'pack_count':seller.get('pack_count',1),'unit_ml':seller.get('unit_ml')} for seller in product.get('sellers',[])]})
+                    'pack_count':seller.get('pack_count',1),'unit_ml':seller.get('unit_ml'),'shipping_cost':seller.get('shipping_cost',0),'free_shipping_from':seller.get('free_shipping_from')} for seller in product.get('sellers',[])]})
         return {'id':uuid.uuid4().hex,'generated_at':now().isoformat(),'reason':reason,'products':products}
 
     async def update_report_if_due(self):
@@ -490,7 +525,7 @@ class Manager:
         if s.get('mode')=='monitor':
             p={'id':uuid.uuid4().hex,'name':entry.title,'ean':s.get('ean',''),'currency':s.get('currency','EUR'),'comparison_unit':'each','offers':[],'sellers':[]}
             seller={'id':uuid.uuid4().hex,'url':s['url'],'store':urlsplit(s['url']).hostname,'selector':s.get('selector',''),
-                    'attribute':s.get('attribute',''),'separator':s.get('decimal_separator','auto'),'currency':p['currency'],'ean':p['ean'],'status':'pending','pack_count':1,'unit_ml':None}
+                    'attribute':s.get('attribute',''),'separator':s.get('decimal_separator','auto'),'currency':p['currency'],'ean':p['ean'],'status':'pending','pack_count':1,'unit_ml':None,'shipping_cost':0.0,'free_shipping_from':None}
             old=await Store(self.hass,1,f'price_monitor.{entry.entry_id}').async_load() or {}
             if isinstance(old.get('price'),(int,float)):
                 seller['price']=old['price'];seller['legacy_minimum']=old.get('lowest')
